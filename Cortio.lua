@@ -457,8 +457,8 @@ function Cortio_ToggleMark()
     
     -- Al dispararse desde un Hardware Event (Hardware Keybinding), el entorno
     -- de ejecución es nativamente seguro, así que UnitName devuelve strings limpios.
-    -- Detectar qué unit token se está usando (mouseover tiene prioridad)
-    local sourceUnit = UnitExists("mouseover") and "mouseover" or (UnitExists("target") and "target" or nil)
+    -- Detectar qué unit token se está usando (target tiene prioridad sobre mouseover)
+    local sourceUnit = UnitExists("target") and "target" or (UnitExists("mouseover") and "mouseover" or nil)
     if not sourceUnit then
         print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
         return
