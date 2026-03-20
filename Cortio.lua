@@ -418,5 +418,118 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     end
 end)
 
+--------------------------------------------------------------
+-- COOLDOWN OVERLAY para el icono de corte del JUGADOR
+--------------------------------------------------------------
+-- Spell IDs de interrupt por clase
+local CLASS_INTERRUPT_SPELLID = {
+    WARRIOR     = 6552,    -- Pummel / Zurrar
+    PALADIN     = 96231,   -- Rebuke / Reprimenda
+    HUNTER      = 147362,  -- Counter Shot / Disparo contrarrestante
+    ROGUE       = 1766,    -- Kick / Patada
+    PRIEST      = 15487,   -- Silence / Silencio
+    DEATHKNIGHT = 47528,   -- Mind Freeze / Helada mental
+    SHAMAN      = 57994,   -- Wind Shear / Corte de viento
+    MAGE        = 2139,    -- Counterspell / Contrahechizo
+    WARLOCK     = 19647,   -- Spell Lock / Bloqueo de hechizo
+    MONK        = 116705,  -- Spear Hand Strike / Golpe de mano de lanza
+    DRUID       = 106839,  -- Skull Bash / Testarazo
+    DEMONHUNTER = 183752,  -- Disrupt / Interrumpir
+    EVOKER      = 351338,  -- Quell / Sofocar
+}
+
+-- Crear frame contenedor del icono (32x32) anclado a la izquierda del panel
+local kickIconFrame = CreateFrame("Frame", "CortioKickIconFrame", panel)
+kickIconFrame:SetSize(32, 32)
+kickIconFrame:SetPoint("RIGHT", panel, "LEFT", -6, 0)
+
+-- Textura del icono (se rellenará al cargar según la clase del jugador)
+local kickIconTexture = kickIconFrame:CreateTexture(nil, "ARTWORK")
+kickIconTexture:SetAllPoints(kickIconFrame)
+
+-- Borde fino para que se vea más limpio
+local kickIconBorder = kickIconFrame:CreateTexture(nil, "OVERLAY")
+kickIconBorder:SetAllPoints(kickIconFrame)
+kickIconBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")  -- borde nativo de action bar
+-- Fallback si el atlas no existe (Classic/viejas):
+if not kickIconBorder:GetAtlas() then
+    kickIconBorder:SetTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+    kickIconBorder:SetAllPoints(kickIconFrame)
+end
+
+-- CooldownFrame nativo (el swipe visual)
+local kickCooldown = CreateFrame("Cooldown", "CortioKickCooldown", kickIconFrame, "CooldownFrameTemplate")
+kickCooldown:SetAllPoints(kickIconFrame)
+kickCooldown:SetDrawSwipe(true)     -- animación de barrido oscuro
+kickCooldown:SetDrawEdge(true)      -- línea brillante en el borde del barrido
+kickCooldown:SetDrawBling(true)     -- destello al terminar el CD
+kickCooldown:SetSwipeColor(0, 0, 0, 0.65)  -- negro semitransparente
+kickCooldown:SetHideCountdownNumbers(false) -- mostrar números de CD si el usuario los tiene activados
+
+-- Actualizar el cooldown del icono
+local myInterruptSpellID = nil
+
+local function UpdateKickCooldown()
+    if not myInterruptSpellID then return end
+    -- WoW 12.0: start y duration son "secret numbers" (tainted).
+    -- NO se pueden comparar en Lua (>, <, ==, ~= dan error de taint).
+    -- SetCooldown ES un widget seguro que acepta valores tainted directamente.
+    -- Si duration=0, el CooldownFrame simplemente no muestra nada.
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local info = C_Spell.GetSpellCooldown(myInterruptSpellID)
+        if info then
+            kickCooldown:SetCooldown(info.startTime, info.duration)
+        end
+    elseif GetSpellCooldown then
+        kickCooldown:SetCooldown(GetSpellCooldown(myInterruptSpellID))
+    end
+end
+
+-- Configurar el icono según la clase del jugador
+local function SetupKickIcon()
+    EnsurePlayerInfo()
+    if not playerClass then return end
+
+    myInterruptSpellID = CLASS_INTERRUPT_SPELLID[playerClass]
+    local iconID = CLASS_INTERRUPT_ICONS[playerClass]
+
+    if iconID then
+        kickIconTexture:SetTexture(tonumber(iconID))
+        kickIconFrame:Show()
+    else
+        kickIconFrame:Hide()
+    end
+
+    UpdateKickCooldown()
+end
+
+-- Frame de eventos dedicado al cooldown
+local cdEventFrame = CreateFrame("Frame")
+cdEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+cdEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+cdEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+cdEventFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_ENTERING_WORLD" then
+        SafeCall("KickIcon_Setup", SetupKickIcon)
+    else
+        SafeCall("KickIcon_CD", UpdateKickCooldown)
+    end
+end)
+
+-- Vincular visibilidad del icono al panel
+panel:HookScript("OnShow", function()
+    if myInterruptSpellID then
+        kickIconFrame:Show()
+        UpdateKickCooldown()
+    end
+end)
+panel:HookScript("OnHide", function()
+    kickIconFrame:Hide()
+end)
+
+-- Inicialmente oculto (el panel empieza oculto)
+kickIconFrame:Hide()
+
 panel:Hide()
 print("|cFF00FFFF[Cortio]|r Cargado. Macro: /ct m")
