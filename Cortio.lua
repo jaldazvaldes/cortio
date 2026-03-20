@@ -1,15 +1,16 @@
 --------------------------------------------------------------
 -- CORTIO - Asistente de cortes para WoW 12.0
--- ARQUITECTURA "ZERO GUID":
+-- ARQUITECTURA "ZERO GUID + NAMEPLATE TOKEN":
 -- En WoW 12.0, UnitGUID devuelve "secret strings" intocables.
--- Usamos ÚNICAMENTE UnitName como identificador.
+-- Usamos UnitName + nameplate unit token (UnitIsUnit) para
+-- identificación por instancia sin GUIDs.
 --------------------------------------------------------------
 local addonName, _ = ...
 
 local COMM_PREFIX = "CORTIO"
 C_ChatInfo.RegisterAddonMessagePrefix(COMM_PREFIX)
 
--- Array simple: { { npcName = "...", playerName = "...", playerClass = "..." }, ... }
+-- { { npcName, playerName, playerClass, specIcon, nameplateUnit (opt) }, ... }
 local activeMarks = {}   
 local playerName, playerClass
 
@@ -114,6 +115,19 @@ local function ShortName(fullName)
 end
 
 --------------------------------------------------------------
+-- HELPER: buscar qué nameplateN corresponde a un unit token
+--------------------------------------------------------------
+local function FindNameplateUnit(unit)
+    for i = 1, 40 do
+        local npUnit = "nameplate" .. i
+        if UnitExists(npUnit) and UnitIsUnit(npUnit, unit) then
+            return npUnit
+        end
+    end
+    return nil
+end
+
+--------------------------------------------------------------
 -- NAMEPLATES POOL & ANCHORING
 --------------------------------------------------------------
 local nameplateFrames = {}
@@ -129,7 +143,6 @@ local function GetNameplateFrame()
     
     local f = CreateFrame("Frame", nil, UIParent)
     f:SetSize(40, 20)
-    -- Alto z-index para que salgan por encima de Nameplates
     f:SetFrameStrata("HIGH")
     local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     t:SetPoint("RIGHT", f, "RIGHT")
@@ -149,6 +162,16 @@ local function ReleaseNameplateFrame(unit)
     end
 end
 
+-- Comprobar si una marca corresponde a un nameplate concreto
+local function MarkMatchesUnit(mark, unit, npcName)
+    -- Si la marca tiene nameplate token, solo coincide con ese nameplate exacto
+    if mark.nameplateUnit then
+        return mark.nameplateUnit == unit
+    end
+    -- Marcas remotas (sin token local): fallback por nombre
+    return mark.npcName == npcName
+end
+
 local function UpdateNameplate(unit)
     ReleaseNameplateFrame(unit)
     
@@ -159,7 +182,7 @@ local function UpdateNameplate(unit)
     local present = false
     
     for _, mark in ipairs(activeMarks) do
-        if mark.npcName == npcName then
+        if MarkMatchesUnit(mark, unit, npcName) then
             present = true
             local iconStr = ""
             local classIcon = CLASS_INTERRUPT_ICONS[mark.playerClass]
@@ -179,7 +202,8 @@ local function UpdateNameplate(unit)
             local f = GetNameplateFrame()
             f:SetParent(UIParent) -- Para evitar Action Blocked en 10.0+
             f:ClearAllPoints()
-            f:SetPoint("RIGHT", np, "LEFT", -5, 0)
+            -- Anclar a la izquierda del nameplate, pegado a la barra de vida
+            f:SetPoint("RIGHT", np, "LEFT", -2, 0)
             f.text:SetText(table.concat(cutters, " "))
             f:Show()
             activeNameplates[unit] = f
@@ -286,21 +310,39 @@ function Cortio_ToggleMark()
     
     -- Al dispararse desde un Hardware Event (Hardware Keybinding), el entorno
     -- de ejecución es nativamente seguro, así que UnitName devuelve strings limpios.
-    local targetName = UnitName("mouseover") or UnitName("target")
+    -- Detectar qué unit token se está usando (mouseover tiene prioridad)
+    local sourceUnit = UnitExists("mouseover") and "mouseover" or (UnitExists("target") and "target" or nil)
+    if not sourceUnit then
+        print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
+        return
+    end
+    
+    local targetName = UnitName(sourceUnit)
     if not targetName then
         print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
         return
     end
     
+    -- Buscar el nameplate token exacto para este target
+    local npUnit = FindNameplateUnit(sourceUnit)
+    
     -- Obtener icono de especialización actual
     local specIndex = GetSpecialization()
     local specIcon = specIndex and select(4, GetSpecializationInfo(specIndex)) or "0"
     
+    -- Comprobar si ya hay marca del jugador en este mob específico
     local isMarked = false
     for _, mark in ipairs(activeMarks) do
-        if mark.npcName == targetName and mark.playerName == playerName then
-            isMarked = true
-            break
+        if mark.playerName == playerName then
+            -- Si tenemos nameplate token, comparar por token (preciso)
+            if npUnit and mark.nameplateUnit == npUnit then
+                isMarked = true
+                break
+            -- Si no hay token, comparar por nombre (fallback)
+            elseif not npUnit and mark.npcName == targetName then
+                isMarked = true
+                break
+            end
         end
     end
     
@@ -312,7 +354,8 @@ function Cortio_ToggleMark()
             npcName = targetName, 
             playerName = playerName, 
             playerClass = playerClass,
-            specIcon = tostring(specIcon)
+            specIcon = tostring(specIcon),
+            nameplateUnit = npUnit,  -- nil si no hay nameplate visible
         })
         print("|cFF00FFFF[Cortio]|r Corte asignado a |cFFFFDD00" .. targetName .. "|r")
     else
@@ -333,6 +376,7 @@ function Cortio_ToggleMark()
     
     if channel then
         -- Formato: ACTION:CLASS:SPECICON:NPCNAME
+        -- (el nameplate token es local, no se envía por comms)
         C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..tostring(specIcon)..":"..targetName, channel)
     end
 end
@@ -388,9 +432,24 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         if not CortioDB.errors then CortioDB.errors = {} end
         
     elseif event == "NAME_PLATE_UNIT_ADDED" then
+        -- Intentar re-asociar marcas huérfanas (sin nameplateUnit) a este nameplate
+        local addedName = UnitName(arg1)
+        if addedName then
+            for _, mark in ipairs(activeMarks) do
+                if not mark.nameplateUnit and mark.npcName == addedName then
+                    mark.nameplateUnit = arg1
+                end
+            end
+        end
         SafeCall("Nameplate_Add", UpdateNameplate, arg1)
         
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
+        -- Limpiar token de marcas asociadas a este nameplate que desaparece
+        for _, mark in ipairs(activeMarks) do
+            if mark.nameplateUnit == arg1 then
+                mark.nameplateUnit = nil  -- queda huérfana, se re-asociará en ADDED
+            end
+        end
         SafeCall("Nameplate_Remove", ReleaseNameplateFrame, arg1)
         
     elseif event == "CHAT_MSG_ADDON" then
