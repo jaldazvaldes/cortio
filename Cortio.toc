@@ -1,0 +1,8 @@
+## Interface: 120000
+## Title: Cortio
+## Notes: Asistente de cortes para World of Warcraft
+## Author: yeye
+## Version: 1.0
+## SavedVariables: CortioDB
+
+Cortio.lua

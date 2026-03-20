@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="CORTIO_TOGGLE_MARK" header="CORTIO_HEADER" category="ADDONS">
+        Cortio_ToggleMark()
+    </Binding>
+</Bindings>
