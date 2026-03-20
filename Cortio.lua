@@ -108,6 +108,22 @@ local CLASS_INTERRUPT_ICONS = {
     EVOKER = "4623131",       -- Sofocar
 }
 
+-- Spell IDs de interrupt por clase (necesario antes de ApplyLocalCooldown)
+local CLASS_INTERRUPT_SPELLID = {
+    WARRIOR     = 6552,    -- Pummel / Zurrar
+    PALADIN     = 96231,   -- Rebuke / Reprimenda
+    HUNTER      = 147362,  -- Counter Shot / Disparo contrarrestante
+    ROGUE       = 1766,    -- Kick / Patada
+    PRIEST      = 15487,   -- Silence / Silencio
+    DEATHKNIGHT = 47528,   -- Mind Freeze / Helada mental
+    SHAMAN      = 57994,   -- Wind Shear / Corte de viento
+    MAGE        = 2139,    -- Counterspell / Contrahechizo
+    WARLOCK     = 19647,   -- Spell Lock / Bloqueo de hechizo
+    MONK        = 116705,  -- Spear Hand Strike / Golpe de mano de lanza
+    DRUID       = 106839,  -- Skull Bash / Testarazo
+    DEMONHUNTER = 183752,  -- Disrupt / Interrumpir
+    EVOKER      = 351338,  -- Quell / Sofocar
+}
 local function ShortName(fullName)
     if not fullName then return "?" end
     local name = strsplit("-", fullName)
@@ -129,24 +145,57 @@ end
 
 --------------------------------------------------------------
 -- NAMEPLATES POOL & ANCHORING
+-- Usa frames de icono reales (no FontStrings) para poder
+-- mostrar CooldownFrame encima del icono del jugador local.
 --------------------------------------------------------------
+local MAX_ICONS_PER_PLATE = 8  -- hasta 4 jugadores x 2 iconos (clase+spec)
 local nameplateFrames = {}
 local activeNameplates = {} -- unitID "nameplateX" => frame
+
+local function CreateIconSubFrame(parent, index)
+    local icon = CreateFrame("Frame", nil, parent)
+    icon:SetSize(24, 24)
+    -- Apilar iconos de derecha a izquierda
+    if index == 1 then
+        icon:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+    else
+        icon:SetPoint("RIGHT", parent.icons[index - 1], "LEFT", -2, 0)
+    end
+    icon.texture = icon:CreateTexture(nil, "ARTWORK")
+    icon.texture:SetAllPoints()
+    -- CooldownFrame para el swipe visual (solo se activará en el icono local)
+    icon.cooldown = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
+    icon.cooldown:SetAllPoints()
+    icon.cooldown:SetDrawSwipe(true)
+    icon.cooldown:SetDrawEdge(true)
+    icon.cooldown:SetDrawBling(true)
+    icon.cooldown:SetSwipeColor(0, 0, 0, 0.65)
+    icon.isLocal = false  -- flag para saber si es del jugador local
+    icon:Hide()
+    return icon
+end
 
 local function GetNameplateFrame()
     for _, f in ipairs(nameplateFrames) do
         if not f:IsShown() and not f.inUse then
+            -- Resetear todos los iconos
+            for _, ic in ipairs(f.icons) do
+                ic:Hide()
+                ic.cooldown:Clear()
+                ic.isLocal = false
+            end
             f.inUse = true
             return f
         end
     end
     
     local f = CreateFrame("Frame", nil, UIParent)
-    f:SetSize(40, 20)
+    f:SetSize(MAX_ICONS_PER_PLATE * 26, 24)
     f:SetFrameStrata("HIGH")
-    local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    t:SetPoint("RIGHT", f, "RIGHT")
-    f.text = t
+    f.icons = {}
+    for i = 1, MAX_ICONS_PER_PLATE do
+        f.icons[i] = CreateIconSubFrame(f, i)
+    end
     f.inUse = true
     table.insert(nameplateFrames, f)
     return f
@@ -155,6 +204,11 @@ end
 local function ReleaseNameplateFrame(unit)
     local f = activeNameplates[unit]
     if f then
+        for _, ic in ipairs(f.icons) do
+            ic:Hide()
+            ic.cooldown:Clear()
+            ic.isLocal = false
+        end
         f:Hide()
         f:ClearAllPoints()
         f.inUse = false
@@ -164,12 +218,31 @@ end
 
 -- Comprobar si una marca corresponde a un nameplate concreto
 local function MarkMatchesUnit(mark, unit, npcName)
-    -- Si la marca tiene nameplate token, solo coincide con ese nameplate exacto
     if mark.nameplateUnit then
         return mark.nameplateUnit == unit
     end
-    -- Marcas remotas (sin token local): fallback por nombre
     return mark.npcName == npcName
+end
+
+-- Aplicar cooldown del interrupt del jugador local a un icono
+local function ApplyLocalCooldown(iconFrame)
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local spellID = CLASS_INTERRUPT_SPELLID and CLASS_INTERRUPT_SPELLID[playerClass]
+        if spellID then
+            local info = C_Spell.GetSpellCooldown(spellID)
+            if info then
+                iconFrame.cooldown:SetCooldown(info.startTime, info.duration)
+                return
+            end
+        end
+    elseif GetSpellCooldown then
+        local spellID = CLASS_INTERRUPT_SPELLID and CLASS_INTERRUPT_SPELLID[playerClass]
+        if spellID then
+            iconFrame.cooldown:SetCooldown(GetSpellCooldown(spellID))
+            return
+        end
+    end
+    iconFrame.cooldown:Clear()
 end
 
 local function UpdateNameplate(unit)
@@ -178,35 +251,76 @@ local function UpdateNameplate(unit)
     local npcName = UnitName(unit)
     if not npcName then return end
     
-    local cutters = {}
-    local present = false
-    
+    -- Recopilar marcas que aplican a este nameplate
+    local marks = {}
     for _, mark in ipairs(activeMarks) do
         if MarkMatchesUnit(mark, unit, npcName) then
-            present = true
-            local iconStr = ""
-            local classIcon = CLASS_INTERRUPT_ICONS[mark.playerClass]
-            if classIcon then
-                iconStr = iconStr .. "|T" .. classIcon .. ":24:24:0:0|t"
-            end
-            if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
-                iconStr = iconStr .. "|T" .. mark.specIcon .. ":24:24:0:0|t"
-            end
-            table.insert(cutters, iconStr)
+            table.insert(marks, mark)
         end
     end
     
-    if present then
-        local np = C_NamePlate.GetNamePlateForUnit(unit)
-        if np then
-            local f = GetNameplateFrame()
-            f:SetParent(UIParent) -- Para evitar Action Blocked en 10.0+
-            f:ClearAllPoints()
-            -- Anclar a la izquierda del nameplate, pegado a la barra de vida
-            f:SetPoint("RIGHT", np, "LEFT", -2, 0)
-            f.text:SetText(table.concat(cutters, " "))
-            f:Show()
-            activeNameplates[unit] = f
+    if #marks == 0 then return end
+    
+    local np = C_NamePlate.GetNamePlateForUnit(unit)
+    if not np then return end
+    
+    local f = GetNameplateFrame()
+    f:SetParent(UIParent)
+    f:ClearAllPoints()
+    f:SetPoint("RIGHT", np, "LEFT", -2, 0)
+    
+    local iconIdx = 0
+    for _, mark in ipairs(marks) do
+        -- Icono de clase (interrupción)
+        local classIcon = CLASS_INTERRUPT_ICONS[mark.playerClass]
+        if classIcon then
+            iconIdx = iconIdx + 1
+            if iconIdx <= MAX_ICONS_PER_PLATE then
+                local ic = f.icons[iconIdx]
+                ic.texture:SetTexture(tonumber(classIcon))
+                -- ¿Es el jugador local? → activar cooldown
+                if mark.playerName == playerName then
+                    ic.isLocal = true
+                    ApplyLocalCooldown(ic)
+                else
+                    ic.isLocal = false
+                    ic.cooldown:Clear()
+                end
+                ic:Show()
+            end
+        end
+        -- Icono de especialización
+        if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
+            iconIdx = iconIdx + 1
+            if iconIdx <= MAX_ICONS_PER_PLATE then
+                local ic = f.icons[iconIdx]
+                ic.texture:SetTexture(tonumber(mark.specIcon))
+                ic.isLocal = false
+                ic.cooldown:Clear()
+                ic:Show()
+            end
+        end
+    end
+    
+    -- Ocultar iconos sobrantes
+    for i = iconIdx + 1, MAX_ICONS_PER_PLATE do
+        f.icons[i]:Hide()
+    end
+    
+    f:Show()
+    activeNameplates[unit] = f
+end
+
+-- Actualizar SOLO los cooldowns de los iconos locales en nameplates activos
+-- (sin reconstruir frames — llamada ligera para SPELL_UPDATE_COOLDOWN)
+local function UpdateNameplateCooldowns()
+    for _, f in pairs(activeNameplates) do
+        if f and f.icons then
+            for _, ic in ipairs(f.icons) do
+                if ic:IsShown() and ic.isLocal then
+                    ApplyLocalCooldown(ic)
+                end
+            end
         end
     end
 end
@@ -480,22 +594,6 @@ end)
 --------------------------------------------------------------
 -- COOLDOWN OVERLAY para el icono de corte del JUGADOR
 --------------------------------------------------------------
--- Spell IDs de interrupt por clase
-local CLASS_INTERRUPT_SPELLID = {
-    WARRIOR     = 6552,    -- Pummel / Zurrar
-    PALADIN     = 96231,   -- Rebuke / Reprimenda
-    HUNTER      = 147362,  -- Counter Shot / Disparo contrarrestante
-    ROGUE       = 1766,    -- Kick / Patada
-    PRIEST      = 15487,   -- Silence / Silencio
-    DEATHKNIGHT = 47528,   -- Mind Freeze / Helada mental
-    SHAMAN      = 57994,   -- Wind Shear / Corte de viento
-    MAGE        = 2139,    -- Counterspell / Contrahechizo
-    WARLOCK     = 19647,   -- Spell Lock / Bloqueo de hechizo
-    MONK        = 116705,  -- Spear Hand Strike / Golpe de mano de lanza
-    DRUID       = 106839,  -- Skull Bash / Testarazo
-    DEMONHUNTER = 183752,  -- Disrupt / Interrumpir
-    EVOKER      = 351338,  -- Quell / Sofocar
-}
 
 -- Crear frame contenedor del icono (32x32) anclado a la izquierda del panel
 local kickIconFrame = CreateFrame("Frame", "CortioKickIconFrame", panel)
@@ -573,6 +671,8 @@ cdEventFrame:SetScript("OnEvent", function(_, event)
         SafeCall("KickIcon_Setup", SetupKickIcon)
     else
         SafeCall("KickIcon_CD", UpdateKickCooldown)
+        -- También refrescar cooldowns en los iconos de nameplate
+        SafeCall("KickIcon_NP", UpdateNameplateCooldowns)
     end
 end)
 
