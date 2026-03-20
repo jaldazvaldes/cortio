@@ -90,10 +90,110 @@ local CLASS_COLORS = {
     EVOKER="FF33937F",
 }
 
+-- Iconos de corte de cada clase (FileDataID para evitar problemas de compatibilidad)
+local CLASS_INTERRUPT_ICONS = {
+    WARRIOR = "132242",       -- Zurrar
+    PALADIN = "135966",       -- Reprimenda
+    HUNTER = "135250",        -- Disparo contrarrestante
+    ROGUE = "132219",         -- Patada
+    PRIEST = "136154",        -- Silencio
+    DEATHKNIGHT = "136173",   -- Helada mental
+    SHAMAN = "136018",        -- Corte de viento
+    MAGE = "135856",          -- Contrahechizo
+    WARLOCK = "136174",       -- Bloqueo de hechizo
+    MONK = "606547",          -- Golpe de mano de lanza
+    DRUID = "132114",         -- Testarazo
+    DEMONHUNTER = "1323326",  -- Interrumpir
+    EVOKER = "4623131",       -- Sofocar
+}
+
 local function ShortName(fullName)
     if not fullName then return "?" end
     local name = strsplit("-", fullName)
     return name or fullName
+end
+
+--------------------------------------------------------------
+-- NAMEPLATES POOL & ANCHORING
+--------------------------------------------------------------
+local nameplateFrames = {}
+local activeNameplates = {} -- unitID "nameplateX" => frame
+
+local function GetNameplateFrame()
+    for _, f in ipairs(nameplateFrames) do
+        if not f:IsShown() and not f.inUse then
+            f.inUse = true
+            return f
+        end
+    end
+    
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(40, 20)
+    -- Alto z-index para que salgan por encima de Nameplates
+    f:SetFrameStrata("HIGH")
+    local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    t:SetPoint("RIGHT", f, "RIGHT")
+    f.text = t
+    f.inUse = true
+    table.insert(nameplateFrames, f)
+    return f
+end
+
+local function ReleaseNameplateFrame(unit)
+    local f = activeNameplates[unit]
+    if f then
+        f:Hide()
+        f:ClearAllPoints()
+        f.inUse = false
+        activeNameplates[unit] = nil
+    end
+end
+
+local function UpdateNameplate(unit)
+    ReleaseNameplateFrame(unit)
+    
+    local npcName = UnitName(unit)
+    if not npcName then return end
+    
+    local cutters = {}
+    local present = false
+    
+    for _, mark in ipairs(activeMarks) do
+        if mark.npcName == npcName then
+            present = true
+            local iconStr = ""
+            local classIcon = CLASS_INTERRUPT_ICONS[mark.playerClass]
+            if classIcon then
+                iconStr = iconStr .. "|T" .. classIcon .. ":24:24:0:0|t"
+            end
+            if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
+                iconStr = iconStr .. "|T" .. mark.specIcon .. ":24:24:0:0|t"
+            end
+            table.insert(cutters, iconStr)
+        end
+    end
+    
+    if present then
+        local np = C_NamePlate.GetNamePlateForUnit(unit)
+        if np then
+            local f = GetNameplateFrame()
+            f:SetParent(UIParent) -- Para evitar Action Blocked en 10.0+
+            f:ClearAllPoints()
+            f:SetPoint("RIGHT", np, "LEFT", -5, 0)
+            f.text:SetText(table.concat(cutters, " "))
+            f:Show()
+            activeNameplates[unit] = f
+        end
+    end
+end
+
+local function UpdateAllNameplates()
+    for i = 1, 40 do
+        local unit = "nameplate" .. i
+        if UnitExists(unit) then
+            UpdateNameplate(unit)
+        end
+    end
 end
 
 local function UpdatePanel()
@@ -107,17 +207,38 @@ local function UpdatePanel()
     for _, mark in ipairs(activeMarks) do
         local npc = mark.npcName
         if not grouped[npc] then
-            grouped[npc] = {}
+            grouped[npc] = { cutters = {}, classes = {} }
         end
         local color = CLASS_COLORS[mark.playerClass] or "FFFFFFFF"
-        table.insert(grouped[npc], "|c" .. color .. ShortName(mark.playerName) .. "|r")
+        local playerStr = "|c" .. color .. ShortName(mark.playerName) .. "|r"
+        
+        -- Añadir icono de especialización si existe
+        if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
+            playerStr = "|T" .. mark.specIcon .. ":14:14:0:0|t " .. playerStr
+        end
+        
+        table.insert(grouped[npc].cutters, playerStr)
+        grouped[npc].classes[mark.playerClass] = true -- Para saber qué iconos mostrar
     end
     
     local entries = {}
-    for npc, cutters in pairs(grouped) do
-        table.sort(cutters)
-        table.insert(entries, { npc = npc, cuttersText = table.concat(cutters, ", ") })
+    for npc, data in pairs(grouped) do
+        table.sort(data.cutters)
+        
+        -- Generar los iconos de las clases asignadas a este NPC
+        local iconsStr = ""
+        for cls, _ in pairs(data.classes) do
+            local iconID = CLASS_INTERRUPT_ICONS[cls]
+            if iconID then
+                -- |T[Textura]:Alto:Ancho:XOffset:YOffset|t format
+                iconsStr = iconsStr .. "|T" .. iconID .. ":16:16:0:0|t "
+            end
+        end
+        
+        table.insert(entries, { npc = npc, icons = iconsStr, cuttersText = table.concat(data.cutters, ", ") })
     end
+    
+    UpdateAllNameplates() -- Actualizar placas de mundo 3D instantáneamente
     
     if #entries == 0 then
         panel:Hide()
@@ -130,7 +251,8 @@ local function UpdatePanel()
     for _, entry in ipairs(entries) do
         idx = idx + 1
         if idx > MAX_LINES then break end
-        textLines[idx]:SetText("|cFFFFDD00" .. entry.npc .. "|r ← " .. entry.cuttersText)
+        -- Se cambia la flecha Unicode por "<-" para evitar el recuadro [] en fuentes que no lo soportan
+        textLines[idx]:SetText(entry.icons .. "|cFFFFDD00" .. entry.npc .. "|r <- " .. entry.cuttersText)
         textLines[idx]:Show()
     end
     panel:SetHeight(24 + idx * 14)
@@ -170,6 +292,10 @@ function Cortio_ToggleMark()
         return
     end
     
+    -- Obtener icono de especialización actual
+    local specIndex = GetSpecialization()
+    local specIcon = specIndex and select(4, GetSpecializationInfo(specIndex)) or "0"
+    
     local isMarked = false
     for _, mark in ipairs(activeMarks) do
         if mark.npcName == targetName and mark.playerName == playerName then
@@ -185,7 +311,8 @@ function Cortio_ToggleMark()
         table.insert(activeMarks, { 
             npcName = targetName, 
             playerName = playerName, 
-            playerClass = playerClass 
+            playerClass = playerClass,
+            specIcon = tostring(specIcon)
         })
         print("|cFF00FFFF[Cortio]|r Corte asignado a |cFFFFDD00" .. targetName .. "|r")
     else
@@ -205,7 +332,8 @@ function Cortio_ToggleMark()
     end
     
     if channel then
-        C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..targetName, channel)
+        -- Formato: ACTION:CLASS:SPECICON:NPCNAME
+        C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..tostring(specIcon)..":"..targetName, channel)
     end
 end
 
@@ -250,6 +378,8 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("CHAT_MSG_ADDON")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -257,19 +387,27 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         if not CortioDB then CortioDB = {} end
         if not CortioDB.errors then CortioDB.errors = {} end
         
+    elseif event == "NAME_PLATE_UNIT_ADDED" then
+        SafeCall("Nameplate_Add", UpdateNameplate, arg1)
+        
+    elseif event == "NAME_PLATE_UNIT_REMOVED" then
+        SafeCall("Nameplate_Remove", ReleaseNameplateFrame, arg1)
+        
     elseif event == "CHAT_MSG_ADDON" then
         if arg1 == COMM_PREFIX then
             local sender = select(2, ...)
             if sender == playerName then return end
             
-            local action, cls, npcName = strsplit(":", arg2)
+            -- strsplit con límite 4 asegura que npcs con ':' en el nombre no rompan el parseo
+            local action, cls, specIcon, npcName = strsplit(":", arg2, 4)
             if action and cls and npcName then
                 if action == "MARK" then
                     ClearPlayerMark(sender)
                     table.insert(activeMarks, { 
                         npcName = npcName, 
                         playerName = sender, 
-                        playerClass = cls 
+                        playerClass = cls,
+                        specIcon = specIcon
                     })
                 elseif action == "UNMARK" then
                     ClearPlayerMark(sender)
