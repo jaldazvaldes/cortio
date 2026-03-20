@@ -1,15 +1,17 @@
 --------------------------------------------------------------
 -- CORTIO - Asistente de cortes para WoW 12.0
--- ARQUITECTURA "GUID ESTÁNDAR":
--- Usamos UnitGUID para identificación por instancia, además de UnitName.
--- El cooldown local está estrictamente separado de los mensajes remotos de red.
+--------------------------------------------------------------
+-- CORTIO - Asistente de cortes para WoW 12.0
+-- ARQUITECTURA "ZERO GUID + NAMEPLATE TOKEN":
+-- En WoW 12.0, UnitGUID en nameplates devuelve "secret strings" intocables.
+-- Usamos UnitName + nameplate unit token para asegurar que solo una instancia se marque.
 --------------------------------------------------------------
 local addonName, _ = ...
 
 local COMM_PREFIX = "CORTIO"
 C_ChatInfo.RegisterAddonMessagePrefix(COMM_PREFIX)
 
--- { { npcGUID, npcName, playerName, playerClass, specIcon, remoteCDEnd, remoteCDDuration }, ... }
+-- { { npcName, playerName, playerClass, specIcon, remoteCDEnd, remoteCDDuration, nameplateUnit }, ... }
 local activeMarks = {}   
 local playerName, playerClass
 
@@ -92,7 +94,7 @@ local CLASS_COLORS = {
 
 -- Iconos de corte de cada clase (FileDataID para evitar problemas de compatibilidad)
 local CLASS_INTERRUPT_ICONS = {
-    WARRIOR = "132242",       -- Zurrar
+    WARRIOR = "132344",       -- Zurrar
     PALADIN = "135966",       -- Reprimenda
     HUNTER = "135250",        -- Disparo contrarrestante
     ROGUE = "132219",         -- Patada
@@ -154,6 +156,19 @@ local function ShortName(fullName)
 end
 
 
+
+--------------------------------------------------------------
+-- HELPER: buscar qué nameplateN corresponde a un unit token
+--------------------------------------------------------------
+local function FindNameplateUnit(unit)
+    for i = 1, 40 do
+        local npUnit = "nameplate" .. i
+        if UnitExists(npUnit) and UnitIsUnit(npUnit, unit) then
+            return npUnit
+        end
+    end
+    return nil
+end
 
 --------------------------------------------------------------
 -- NAMEPLATES POOL & ANCHORING
@@ -255,13 +270,23 @@ local function ApplyLocalCooldown(iconFrame)
 end
 
 local function UpdateNameplate(unit)
-    local npcGUID = UnitGUID(unit)
-    if not npcGUID then return end
+    local npcName = UnitName(unit)
+    if not npcName then return end
     
     local marks = {}
     for _, mark in ipairs(activeMarks) do
-        if mark.npcGUID == npcGUID then
+        -- Si ya está asignada a ESTE nameplate en concreto
+        if mark.nameplateUnit == unit then
             table.insert(marks, mark)
+        -- Si no está asignada a nadie, INTENTAR asignarla mediante el nombre
+        elseif not mark.nameplateUnit then
+            -- Pcall vital: Blizzard devuelve secret strings tintados desde UnitName("nameplateN") en las mazmorras
+            -- Si se intenta comparar "==" se produce un error fatal. pcall lo previene silenciosamente.
+            local ok, match = pcall(function() return mark.npcName == npcName end)
+            if ok and match then
+                mark.nameplateUnit = unit
+                table.insert(marks, mark)
+            end
         end
     end
     
@@ -365,57 +390,40 @@ local function UpdatePanel()
         line:Hide()
     end
     
-    -- Agrupar por nombre del NPC para mostrar juntos
-    local grouped = {}
+    local entries = {}
     for _, mark in ipairs(activeMarks) do
-        local npc = mark.npcName
-        if not grouped[npc] then
-            grouped[npc] = { cutters = {}, classes = {} }
-        end
+        -- No podemos usar mark.npcName como llave de un diccionario (grouped[npc]) porque
+        -- mark.npcName puede ser un Secret String de WoW 12.0. Las variables taint desaparecen de pairs().
         local color = CLASS_COLORS[mark.playerClass] or "FFFFFFFF"
         local playerStr = "|c" .. color .. ShortName(mark.playerName) .. "|r"
         
-        -- Añadir icono de especialización si existe
         if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
             playerStr = "|T" .. mark.specIcon .. ":14:14:0:0|t " .. playerStr
         end
         
-        table.insert(grouped[npc].cutters, playerStr)
-        grouped[npc].classes[mark.playerClass] = true -- Para saber qué iconos mostrar
+        local iconID = CLASS_INTERRUPT_ICONS[mark.playerClass]
+        local iconsStr = iconID and ("|T" .. iconID .. ":16:16:0:0|t ") or ""
+        
+        table.insert(entries, { npc = mark.npcName, icons = iconsStr, cuttersText = playerStr, playerName = mark.playerName })
     end
     
-    local entries = {}
-    for npc, data in pairs(grouped) do
-        table.sort(data.cutters)
-        
-        -- Generar los iconos de las clases asignadas a este NPC
-        local iconsStr = ""
-        for cls, _ in pairs(data.classes) do
-            local iconID = CLASS_INTERRUPT_ICONS[cls]
-            if iconID then
-                -- |T[Textura]:Alto:Ancho:XOffset:YOffset|t format
-                iconsStr = iconsStr .. "|T" .. iconID .. ":16:16:0:0|t "
-            end
-        end
-        
-        table.insert(entries, { npc = npc, icons = iconsStr, cuttersText = table.concat(data.cutters, ", ") })
-    end
-    
-    UpdateAllNameplates() -- Actualizar placas de mundo 3D instantáneamente
+    SafeCall("Upd_Nameplates", UpdateAllNameplates) -- Actualizar placas de mundo 3D aislándolo del panel
     
     if #entries == 0 then
         panel:Hide()
         return
     end
     
-    table.sort(entries, function(a, b) return a.npc < b.npc end)
+    -- Ordenamos por el nombre del jugador porque hacer (a.npc < b.npc) crashearía la ejecución si npc es Secret String
+    table.sort(entries, function(a, b) return a.playerName < b.playerName end)
     
     local idx = 0
     for _, entry in ipairs(entries) do
         idx = idx + 1
         if idx > MAX_LINES then break end
-        -- Se cambia la flecha Unicode por "<-" para evitar el recuadro [] en fuentes que no lo soportan
-        textLines[idx]:SetText(entry.icons .. "|cFFFFDD00" .. entry.npc .. "|r <- " .. entry.cuttersText)
+        
+        -- tostring() previene crashes infrecuentes al pintar variables secretas directamente
+        textLines[idx]:SetText(entry.icons .. "|cFFFFDD00" .. tostring(entry.npc) .. "|r <- " .. entry.cuttersText)
         textLines[idx]:Show()
     end
     panel:SetHeight(24 + idx * 14)
@@ -457,20 +465,25 @@ function Cortio_ToggleMark()
     end
     
     local targetName = UnitName(sourceUnit)
-    local targetGUID = UnitGUID(sourceUnit)
-    if not targetName or not targetGUID then
+    if not targetName then
         print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
         return
     end
     
+    local npUnit = FindNameplateUnit(sourceUnit)
     local specIndex = GetSpecialization()
     local specIcon = specIndex and select(4, GetSpecializationInfo(specIndex)) or "0"
     
     local isMarked = false
     for _, mark in ipairs(activeMarks) do
-        if mark.playerName == playerName and mark.npcGUID == targetGUID then
-            isMarked = true
-            break
+        if mark.playerName == playerName then
+            if npUnit and mark.nameplateUnit == npUnit then
+                isMarked = true
+                break
+            elseif not npUnit and mark.npcName == targetName then
+                isMarked = true
+                break
+            end
         end
     end
     
@@ -479,13 +492,13 @@ function Cortio_ToggleMark()
     if action == "MARK" then
         ClearPlayerMark(playerName)
         table.insert(activeMarks, { 
-            npcGUID = targetGUID,
             npcName = targetName, 
             playerName = playerName, 
             playerClass = playerClass,
             specIcon = tostring(specIcon),
             remoteCDEnd = 0,
-            remoteCDDuration = 0
+            remoteCDDuration = 0,
+            nameplateUnit = npUnit
         })
         print("|cFF00FFFF[Cortio]|r Corte asignado a |cFFFFDD00" .. targetName .. "|r")
     else
@@ -505,8 +518,9 @@ function Cortio_ToggleMark()
     end
     
     if channel then
-        -- Formato: ACTION:CLASS:SPECICON:NPCGUID:NPCNAME
-        C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..tostring(specIcon)..":"..targetGUID..":"..targetName, channel)
+        -- Formato: ACTION:CLASS:SPECICON:NPCNAME
+        -- (el nameplate token es local, no se envía por comms)
+        C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..tostring(specIcon)..":"..targetName, channel)
     end
 end
 
@@ -536,11 +550,11 @@ SlashCmdList["CORTIO"] = function(msg)
         else
             print("|cFF00FFFF[Cortio]|r Sin errores.")
         end
-    elseif cmd == "clearerrors" then
+    elseif cmd == "clearerrors" or cmd == "clear" then
         if CortioDB then CortioDB.errors = {} end
         print("|cFF00FFFF[Cortio]|r Errores borrados.")
     else
-        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /cortio errors")
+        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct errors | /ct clear")
         print("|cFF00FFFF[Cortio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end
@@ -564,6 +578,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         SafeCall("Nameplate_Add", UpdateNameplate, arg1)
         
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
+        for _, mark in ipairs(activeMarks) do
+            if mark.nameplateUnit == arg1 then
+                mark.nameplateUnit = nil  -- liberar token perdido
+            end
+        end
         SafeCall("Nameplate_Remove", ReleaseNameplateFrame, arg1)
         
     elseif event == "CHAT_MSG_ADDON" then
@@ -571,7 +590,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             local sender = select(2, ...)
             if sender == playerName then return end
             
-            local action, p2, p3, p4, p5 = strsplit(":", arg2, 5)
+            local action, p2, p3, p4 = strsplit(":", arg2, 4)
             
             if action == "CD" then
                 local cdDuration = tonumber(p2)
@@ -595,18 +614,18 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                         end
                     end)
                 end
-            elseif action and p2 and p4 and p5 then
-                local cls, specIcon, npcGUID, npcName = p2, p3, p4, p5
+            elseif action and p2 and p4 then
+                local cls, specIcon, npcName = p2, p3, p4
                 if action == "MARK" then
                     ClearPlayerMark(sender)
                     table.insert(activeMarks, { 
-                        npcGUID = npcGUID,
                         npcName = npcName, 
                         playerName = sender, 
                         playerClass = cls,
                         specIcon = specIcon,
                         remoteCDEnd = 0,
-                        remoteCDDuration = 0
+                        remoteCDDuration = 0,
+                        nameplateUnit = nil
                     })
                 elseif action == "UNMARK" then
                     ClearPlayerMark(sender)
