@@ -124,6 +124,30 @@ local CLASS_INTERRUPT_SPELLID = {
     DEMONHUNTER = 183752,  -- Disrupt / Interrumpir
     EVOKER      = 351338,  -- Quell / Sofocar
 }
+
+-- Cooldown base (segundos) de cada interrupt — para compartir con otros jugadores
+-- (valores base sin talentos; suficiente para feedback visual)
+local CLASS_INTERRUPT_CD = {
+    WARRIOR     = 15,
+    PALADIN     = 15,
+    HUNTER      = 24,
+    ROGUE       = 15,
+    PRIEST      = 45,
+    DEATHKNIGHT = 15,
+    SHAMAN      = 12,
+    MAGE        = 24,
+    WARLOCK     = 24,
+    MONK        = 15,
+    DRUID       = 15,
+    DEMONHUNTER = 15,
+    EVOKER      = 40,
+}
+
+-- Lookup inverso: spellID → true (para detectar casts rápido)
+local INTERRUPT_SPELLID_SET = {}
+for _, sid in pairs(CLASS_INTERRUPT_SPELLID) do
+    INTERRUPT_SPELLID_SET[sid] = true
+end
 local function ShortName(fullName)
     if not fullName then return "?" end
     local name = strsplit("-", fullName)
@@ -170,7 +194,8 @@ local function CreateIconSubFrame(parent, index)
     icon.cooldown:SetDrawEdge(true)
     icon.cooldown:SetDrawBling(true)
     icon.cooldown:SetSwipeColor(0, 0, 0, 0.65)
-    icon.isLocal = false  -- flag para saber si es del jugador local
+    icon.isLocal = false   -- flag: icono del jugador local
+    icon.ownerName = nil   -- nombre del jugador dueño del icono
     icon:Hide()
     return icon
 end
@@ -183,6 +208,7 @@ local function GetNameplateFrame()
                 ic:Hide()
                 ic.cooldown:Clear()
                 ic.isLocal = false
+                ic.ownerName = nil
             end
             f.inUse = true
             return f
@@ -208,6 +234,7 @@ local function ReleaseNameplateFrame(unit)
             ic:Hide()
             ic.cooldown:Clear()
             ic.isLocal = false
+            ic.ownerName = nil
         end
         f:Hide()
         f:ClearAllPoints()
@@ -279,12 +306,13 @@ local function UpdateNameplate(unit)
                 local ic = f.icons[iconIdx]
                 ic.texture:SetTexture(tonumber(classIcon))
                 -- ¿Es el jugador local? → activar cooldown
+                ic.ownerName = mark.playerName
                 if mark.playerName == playerName then
                     ic.isLocal = true
                     ApplyLocalCooldown(ic)
                 else
                     ic.isLocal = false
-                    ic.cooldown:Clear()
+                    -- No limpiar CD aquí: puede tener un CD remoto activo
                 end
                 ic:Show()
             end
@@ -296,6 +324,7 @@ local function UpdateNameplate(unit)
                 local ic = f.icons[iconIdx]
                 ic.texture:SetTexture(tonumber(mark.specIcon))
                 ic.isLocal = false
+                ic.ownerName = nil  -- spec icon no lleva CD
                 ic.cooldown:Clear()
                 ic:Show()
             end
@@ -572,8 +601,29 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             if sender == playerName then return end
             
             -- strsplit con límite 4 asegura que npcs con ':' en el nombre no rompan el parseo
-            local action, cls, specIcon, npcName = strsplit(":", arg2, 4)
-            if action and cls and npcName then
+            local action, p2, p3, p4 = strsplit(":", arg2, 4)
+            
+            if action == "CD" then
+                -- Mensaje de cooldown: CD:DURATION
+                local cdDuration = tonumber(p2)
+                if cdDuration and cdDuration > 0 then
+                    SafeCall("Remote_CD", function()
+                        -- Aplicar cooldown remoto a los iconos del sender en nameplates
+                        local now = GetTime()
+                        for _, f in pairs(activeNameplates) do
+                            if f and f.icons then
+                                for _, ic in ipairs(f.icons) do
+                                    if ic:IsShown() and ic.ownerName == sender and not ic.isLocal then
+                                        ic.cooldown:SetCooldown(now, cdDuration)
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                end
+            elseif action and p2 and p4 then
+                -- Mensaje de marca: ACTION:CLASS:SPECICON:NPCNAME
+                local cls, specIcon, npcName = p2, p3, p4
                 if action == "MARK" then
                     ClearPlayerMark(sender)
                     table.insert(activeMarks, { 
@@ -588,6 +638,34 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                 UpdatePanel()
             end
         end
+    end
+end)
+
+--------------------------------------------------------------
+-- DETECCIÓN DE CAST DE INTERRUPCIÓN → BROADCAST CD
+--------------------------------------------------------------
+local castDetectFrame = CreateFrame("Frame")
+castDetectFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+castDetectFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
+    if unit ~= "player" then return end
+    if not INTERRUPT_SPELLID_SET[spellID] then return end
+    if not playerClass then return end
+    
+    -- Nuestro interrupt se ha lanzado con éxito → broadcast CD al grupo
+    local cdDuration = CLASS_INTERRUPT_CD[playerClass]
+    if not cdDuration then return end
+    
+    local channel
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        channel = "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        channel = "RAID"
+    elseif IsInGroup() then
+        channel = "PARTY"
+    end
+    
+    if channel then
+        C_ChatInfo.SendAddonMessage(COMM_PREFIX, "CD:" .. cdDuration, channel)
     end
 end)
 
