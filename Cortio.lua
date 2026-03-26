@@ -1,19 +1,52 @@
 --------------------------------------------------------------
 -- CORTIO - Asistente de cortes para WoW 12.0
+-- UnitIsUnit + nameplate tokens para identificación de NPCs.
+-- Los nombres de NPCs son "secret values" en instancias (WoW 12.0);
+-- la identificación remota se hace via UnitTarget(partyN) + UnitIsUnit.
 --------------------------------------------------------------
--- CORTIO - Asistente de cortes para WoW 12.0
--- ARQUITECTURA "ZERO GUID + NAMEPLATE TOKEN":
--- En WoW 12.0, UnitGUID en nameplates devuelve "secret strings" intocables.
--- Usamos UnitName + nameplate unit token para asegurar que solo una instancia se marque.
---------------------------------------------------------------
-local addonName, _ = ...
 
 local COMM_PREFIX = "CORTIO"
 C_ChatInfo.RegisterAddonMessagePrefix(COMM_PREFIX)
 
--- { { npcName, playerName, playerClass, specIcon, remoteCDEnd, remoteCDDuration, nameplateUnit }, ... }
-local activeMarks = {}   
+-- { npcName, playerName, playerClass, specIcon, remoteCDEnd, remoteCDDuration, nameplateUnit, markId, markerSlot }
+local activeMarks = {}
 local playerName, playerClass
+
+local CortioRoster = {}      -- { [playerName] = { class, specIcon, cdEnd, cdTotal } }
+local inspectQueue = {}
+local inspectPending = false
+local specCache = {}
+
+local defaultDB = {
+    announce = true,
+    testMode = false,
+}
+
+--------------------------------------------------------------
+-- ICONOS DE RAID MARKER (sprite sheet)
+-- Slot 1=Estrella, 2=Circulo, 3=Diamante, 4=Triangulo,
+--      5=Luna, 6=Cuadrado, 7=Cruz/X, 8=Calavera
+--------------------------------------------------------------
+local RAID_ICON_COORDS = {
+    [1]={0,16,0,16},  -- Estrella
+    [2]={16,32,0,16}, -- Circulo
+    [3]={32,48,0,16}, -- Diamante
+    [4]={48,64,0,16}, -- Triangulo
+    [5]={0,16,16,32}, -- Luna
+    [6]={16,32,16,32},-- Cuadrado
+    [7]={32,48,16,32},-- Cruz/X
+    [8]={48,64,16,32},-- Calavera
+}
+local RAID_ICON_NAMES = {"Estrella","Circulo","Diamante","Triangulo","Luna","Cuadrado","Cruz","Calavera"}
+local RAID_ICON_TEX  = "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
+
+local function GetRaidIconString(slot, size)
+    size = size or 14
+    local c = RAID_ICON_COORDS[slot]
+    if not c then return "" end
+    return string.format("|T%s:%d:%d:0:0:64:64:%d:%d:%d:%d|t",
+        RAID_ICON_TEX, size, size, c[1], c[2], c[3], c[4])
+end
 
 --------------------------------------------------------------
 -- LOG
@@ -36,10 +69,9 @@ end
 --------------------------------------------------------------
 local function EnsurePlayerInfo()
     if not playerName then
-        local n = securecallfunction(UnitName, "player")
-        local r = securecallfunction(GetNormalizedRealmName)
-        if n and r then
-            playerName = n .. "-" .. r
+        local n, r = securecallfunction(UnitName, "player")
+        if n then
+            playerName = (r and r ~= "") and (n .. "-" .. r) or n
             local _, cls = securecallfunction(UnitClass, "player")
             playerClass = cls
         end
@@ -50,7 +82,7 @@ end
 -- PANEL FLOTANTE
 --------------------------------------------------------------
 local panel = CreateFrame("Frame", "CortioPanelFrame", UIParent, "BackdropTemplate")
-panel:SetSize(220, 30)
+panel:SetSize(250, 30)
 panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
 panel:SetMovable(true)
 panel:EnableMouse(true)
@@ -62,26 +94,67 @@ panel:SetClampedToScreen(true)
 panel:SetBackdrop({
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
     edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    edgeSize = 14,
+    edgeSize = 12,
     insets = { left = 3, right = 3, top = 3, bottom = 3 },
 })
-panel:SetBackdropColor(0.05, 0.05, 0.1, 0.85)
-panel:SetBackdropBorderColor(0, 0.8, 0.8, 0.7)
+panel:SetBackdropColor(0.03, 0.03, 0.08, 0.93)
+panel:SetBackdropBorderColor(0.0, 0.75, 1.0, 0.85)
+
+-- Franja de color detras del titulo
+local titleBg = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
+titleBg:SetPoint("TOPLEFT", panel, "TOPLEFT", 3, -3)
+titleBg:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -3, -3)
+titleBg:SetHeight(17)
+titleBg:SetColorTexture(0.0, 0.45, 0.75, 0.30)
 
 local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 title:SetPoint("TOP", panel, "TOP", 0, -6)
-title:SetText("|cFF00FFFF⚔ CORTIO|r")
+title:SetText("|cFF00D4FF--|r |cFFFFFFFFCORTIO|r |cFF00D4FF--|r")
 
-local textLines = {}
-local MAX_LINES = 8
-for i = 1, MAX_LINES do
-    local line = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    line:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -18 - (i - 1) * 14)
-    line:SetPoint("RIGHT", panel, "RIGHT", -8, 0)
-    line:SetJustifyH("LEFT")
-    line:SetWordWrap(false)
-    line:Hide()
-    textLines[i] = line
+
+-- Linea separadora bajo el titulo
+local separator = panel:CreateTexture(nil, "ARTWORK")
+separator:SetPoint("TOPLEFT", panel, "TOPLEFT", 5, -21)
+separator:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -5, -21)
+separator:SetHeight(1)
+separator:SetColorTexture(0.0, 0.75, 1.0, 0.45)
+
+local panelRows = {}
+
+local function GetOrCreatePanelRow(i)
+    if panelRows[i] then return panelRows[i] end
+    
+    local row = CreateFrame("Frame", nil, panel)
+    row:SetSize(238, 15)
+    row:SetPoint("TOPLEFT", panel, "TOPLEFT", 6, -24 - (i - 1) * 15)
+    
+    row.raidIcon = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.raidIcon:SetSize(14, 14)
+    row.raidIcon:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.raidIcon:SetJustifyH("CENTER")
+    
+    row.classIcon = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.classIcon:SetSize(16, 16)
+    row.classIcon:SetPoint("LEFT", row.raidIcon, "RIGHT", 4, 0)
+    row.classIcon:SetJustifyH("CENTER")
+    
+    row.playerText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.playerText:SetPoint("LEFT", row.classIcon, "RIGHT", 4, 0)
+    row.playerText:SetPoint("RIGHT", row, "RIGHT", -40, 0)
+    row.playerText:SetJustifyH("LEFT")
+    row.playerText:SetWordWrap(false)
+    
+    row.cdText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.cdText:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    row.cdText:SetJustifyH("RIGHT")
+    
+    row:Hide()
+    panelRows[i] = row
+    return row
+end
+
+local function HidePanelRow(i)
+    if panelRows[i] then panelRows[i]:Hide() end
 end
 
 local CLASS_COLORS = {
@@ -170,6 +243,7 @@ local function FindNameplateUnit(unit)
     return nil
 end
 
+
 --------------------------------------------------------------
 -- NAMEPLATES POOL & ANCHORING
 -- Usa frames de icono reales (no FontStrings) para poder
@@ -248,44 +322,37 @@ end
 
 
 
--- Aplicar cooldown del interrupt del jugador local a un icono
-local function ApplyLocalCooldown(iconFrame)
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local spellID = CLASS_INTERRUPT_SPELLID and CLASS_INTERRUPT_SPELLID[playerClass]
-        if spellID then
-            local info = C_Spell.GetSpellCooldown(spellID)
-            if info then
-                iconFrame.cooldown:SetCooldown(info.startTime, info.duration)
-                return
-            end
-        end
-    elseif GetSpellCooldown then
-        local spellID = CLASS_INTERRUPT_SPELLID and CLASS_INTERRUPT_SPELLID[playerClass]
-        if spellID then
-            iconFrame.cooldown:SetCooldown(GetSpellCooldown(spellID))
-            return
-        end
-    end
-    iconFrame.cooldown:Clear()
+-- ApplyLocalCooldown se elimina porque todo se unifica en UpdateNameplate
+
+-- Bypass Tainted Secret Booleans (WoW 12.0 API Crash)
+-- La API 'UnitIsUnit(partyNtarget, nameplateX)' ahora devuelve un 'secret boolean' si no es tu objetivo directo.
+-- Si intentamos leer este boolean en un 'if', el motor Lua colapsa de inmediato por Execution Taint.
+-- Solucion: Evaluamos la igualdad boolean dentro de un 'pcall' secundario. Si explota, lo absorbemos y retornamos falso.
+local function SafeIsMatch(token, npUnit)
+    if not token or not npUnit then return false end
+    local ok, match = pcall(UnitIsUnit, token, npUnit)
+    if not ok then return false end
+    
+    local evalOk, evalResult = pcall(function() return match == true end)
+    if not evalOk then return false end
+    return evalResult
 end
 
 local function UpdateNameplate(unit)
-    local npcName = UnitName(unit)
-    if not npcName then return end
-    
     local marks = {}
+
     for _, mark in ipairs(activeMarks) do
-        -- Si ya está asignada a ESTE nameplate en concreto
+        -- Si esta marca ya está anclada permanentemente a este Nameplate, se queda.
         if mark.nameplateUnit == unit then
             table.insert(marks, mark)
-        -- Si no está asignada a nadie, INTENTAR asignarla mediante el nombre
+        -- Si la marca aún no tiene ancla, y el jugador tiene al objetivo en la mira (target/partyNtarget)
         elseif not mark.nameplateUnit then
-            -- Pcall vital: Blizzard devuelve secret strings tintados desde UnitName("nameplateN") en las mazmorras
-            -- Si se intenta comparar "==" se produce un error fatal. pcall lo previene silenciosamente.
-            local ok, match = pcall(function() return mark.npcName == npcName end)
-            if ok and match then
-                mark.nameplateUnit = unit
-                table.insert(marks, mark)
+            if mark.unitToken and UnitExists(mark.unitToken) then
+                -- Intentamos cazar el Nameplate activo de forma segura evadiendo el Taint
+                if SafeIsMatch(mark.unitToken, unit) then
+                    mark.nameplateUnit = unit
+                    table.insert(marks, mark)
+                end
             end
         end
     end
@@ -303,14 +370,17 @@ local function UpdateNameplate(unit)
         return 
     end
     
+    local anchorFrame = np.UnitFrame or np
+
     if not f then
         f = GetNameplateFrame()
         activeNameplates[unit] = f
     end
     
-    f:SetParent(UIParent)
+    if f:GetParent() ~= UIParent then f:SetParent(UIParent) end
     f:ClearAllPoints()
-    f:SetPoint("RIGHT", np, "LEFT", -2, 0)
+    f:SetPoint("RIGHT", anchorFrame, "LEFT", -6, 0)
+    f:Show()
     
     local iconIdx = 0
     for _, mark in ipairs(marks) do
@@ -324,14 +394,15 @@ local function UpdateNameplate(unit)
                 ic.ownerName = mark.playerName
                 if mark.playerName == playerName then
                     ic.isLocal = true
-                    ApplyLocalCooldown(ic)
                 else
                     ic.isLocal = false
-                    if mark.remoteCDEnd and mark.remoteCDDuration and mark.remoteCDEnd > GetTime() then
-                        ic.cooldown:SetCooldown(mark.remoteCDEnd - mark.remoteCDDuration, mark.remoteCDDuration)
-                    else
-                        ic.cooldown:Clear()
-                    end
+                end
+                
+                local pData = CortioRoster[mark.playerName]
+                if pData and pData.cdEnd and pData.cdEnd > GetTime() then
+                    ic.cooldown:SetCooldown(pData.cdEnd - pData.cdTotal, pData.cdTotal)
+                else
+                    ic.cooldown:SetCooldown(0, 0)
                 end
                 ic:Show()
             end
@@ -361,19 +432,7 @@ local function UpdateNameplate(unit)
     f:Show()
 end
 
--- Actualizar SOLO los cooldowns de los iconos locales en nameplates activos
--- (sin reconstruir frames — llamada ligera para SPELL_UPDATE_COOLDOWN)
-local function UpdateNameplateCooldowns()
-    for _, f in pairs(activeNameplates) do
-        if f and f.icons then
-            for _, ic in ipairs(f.icons) do
-                if ic:IsShown() and ic.isLocal then
-                    ApplyLocalCooldown(ic)
-                end
-            end
-        end
-    end
-end
+-- UpdateNameplateCooldowns y SPELL_UPDATE_COOLDOWN eliminados (usamos tracking local seguro)
 
 local function UpdateAllNameplates()
     for i = 1, 40 do
@@ -384,50 +443,184 @@ local function UpdateAllNameplates()
     end
 end
 
+--------------------------------------------------------------
+-- Roster & Inspect
+--------------------------------------------------------------
+local function ProcessInspectQueue()
+    if inspectPending or #inspectQueue == 0 then return end
+    local unit = table.remove(inspectQueue, 1)
+    if UnitExists(unit) and CanInspect(unit) then
+        inspectPending = true
+        NotifyInspect(unit)
+    else
+        if UnitExists(unit) then
+            C_Timer.After(2, function()
+                table.insert(inspectQueue, unit)
+                ProcessInspectQueue()
+            end)
+        end
+        C_Timer.After(0.1, ProcessInspectQueue)
+    end
+end
+
+local function RebuildRoster()
+    local newRoster = {}
+    local function AddUnit(unit)
+        local name, realm = UnitName(unit)
+        local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+        local _, class = UnitClass(unit)
+        if fullName and class then
+            local specIcon = "0"
+            if UnitIsUnit(unit, "player") then
+                local specIndex = GetSpecialization()
+                if specIndex then
+                    local si = select(4, GetSpecializationInfo(specIndex))
+                    if si then specIcon = tostring(si) end
+                end
+            elseif specCache[fullName] then
+                specIcon = specCache[fullName]
+            else
+                local inQueue = false
+                for _, u in ipairs(inspectQueue) do
+                    if UnitIsUnit(u, unit) then inQueue = true break end
+                end
+                if not inQueue then
+                    table.insert(inspectQueue, unit)
+                    ProcessInspectQueue()
+                end
+            end
+            
+            local old = CortioRoster[fullName]
+            newRoster[fullName] = {
+                unit = unit,
+                class = class,
+                specIcon = specIcon,
+                cdEnd = old and old.cdEnd or 0,
+                cdTotal = old and old.cdTotal or (CLASS_INTERRUPT_CD[class] or 15)
+            }
+        end
+    end
+    
+    if CortioDB and CortioDB.testMode then
+        CortioRoster = {
+            [playerName or "Jugador"] = { unit="player", class=playerClass or "HUNTER", specIcon="132111", cdEnd=0, cdTotal=15 },
+            ["Aliado1"] = { unit="party1", class="WARRIOR", specIcon="132344", cdEnd=GetTime()+5, cdTotal=15 },
+            ["Aliado2"] = { unit="party2", class="MAGE", specIcon="135856", cdEnd=0, cdTotal=24 },
+        }
+        return
+    end
+
+    AddUnit("player")
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do AddUnit("raid"..i) end
+    elseif IsInGroup() then
+        for i = 1, GetNumGroupMembers() do
+            if UnitExists("party"..i) then AddUnit("party"..i) end
+        end
+    end
+    
+    CortioRoster = newRoster
+end
+
 local function UpdatePanel()
-    for _, line in ipairs(textLines) do
-        line:SetText("")
-        line:Hide()
+    for i = 1, #panelRows do
+        HidePanelRow(i)
     end
     
     local entries = {}
-    for _, mark in ipairs(activeMarks) do
-        -- No podemos usar mark.npcName como llave de un diccionario (grouped[npc]) porque
-        -- mark.npcName puede ser un Secret String de WoW 12.0. Las variables taint desaparecen de pairs().
-        local color = CLASS_COLORS[mark.playerClass] or "FFFFFFFF"
-        local playerStr = "|c" .. color .. ShortName(mark.playerName) .. "|r"
+    local now = GetTime()
+    
+    for rPlayerName, data in pairs(CortioRoster) do
+        local rClass = data.class
+        local rSpec = data.specIcon
         
-        if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
-            playerStr = "|T" .. mark.specIcon .. ":14:14:0:0|t " .. playerStr
+        -- Buscar si este jugador tiene una marca activa asignada
+        local assignedMark = nil
+        for _, m in ipairs(activeMarks) do
+            if m.playerName == rPlayerName then
+                assignedMark = m
+                break
+            end
         end
         
-        local iconID = CLASS_INTERRUPT_ICONS[mark.playerClass]
+        local color = CLASS_COLORS[rClass] or "FFFFFFFF"
+        local playerStr = "|c" .. color .. ShortName(rPlayerName) .. "|r"
+        
+        if rSpec and rSpec ~= "0" and rSpec ~= "" then
+            playerStr = "|T" .. rSpec .. ":14:14:0:0|t " .. playerStr
+        end
+        
+        local iconID = CLASS_INTERRUPT_ICONS[rClass]
         local iconsStr = iconID and ("|T" .. iconID .. ":16:16:0:0|t ") or ""
         
-        table.insert(entries, { npc = mark.npcName, icons = iconsStr, cuttersText = playerStr, playerName = mark.playerName })
+        local raidStr = ""
+        local markerSlot = 0
+        if assignedMark and assignedMark.markerSlot and assignedMark.markerSlot > 0 then
+            raidStr = GetRaidIconString(assignedMark.markerSlot, 14)
+            markerSlot = assignedMark.markerSlot
+        end
+        
+        -- Calcular Cooldown
+        local cdText = ""
+        local now = GetTime()
+        
+        -- Bypass Secret Value Taint: Todos usan sincronización por variables numéricas locales en vez de API
+        local sLeft = data.cdEnd - now
+        
+        if sLeft > 0 then
+            local ratio = sLeft / data.cdTotal
+            local cdCol = "FFFF66"
+            if ratio > 0.6 then cdCol = "FF4444" elseif ratio > 0.3 then cdCol = "FFAA00" end
+            cdText = string.format("|cff%s%.1fs|r", cdCol, sLeft)
+        else
+            cdText = "|cff44FF88Ready|r"
+        end
+        
+        table.insert(entries, { 
+            icons = iconsStr, 
+            raidIcon = raidStr, 
+            cuttersText = playerStr, 
+            playerName = rPlayerName, 
+            markerSlot = markerSlot,
+            cdText = cdText
+        })
     end
-    
-    SafeCall("Upd_Nameplates", UpdateAllNameplates) -- Actualizar placas de mundo 3D aislándolo del panel
-    
     if #entries == 0 then
         panel:Hide()
         return
     end
     
-    -- Ordenamos por el nombre del jugador porque hacer (a.npc < b.npc) crashearía la ejecución si npc es Secret String
-    table.sort(entries, function(a, b) return a.playerName < b.playerName end)
+    -- Ordenar primero por si tienen marca (y luego por markerSlot), si no tienen marca por nombre
+    table.sort(entries, function(a, b)
+        if a.markerSlot > 0 and b.markerSlot == 0 then return true end
+        if b.markerSlot > 0 and a.markerSlot == 0 then return false end
+        if a.markerSlot > 0 and b.markerSlot > 0 and a.markerSlot ~= b.markerSlot then 
+            return a.markerSlot < b.markerSlot 
+        end
+        return a.playerName < b.playerName
+    end)
     
     local idx = 0
     for _, entry in ipairs(entries) do
         idx = idx + 1
-        if idx > MAX_LINES then break end
-        
-        -- tostring() previene crashes infrecuentes al pintar variables secretas directamente
-        textLines[idx]:SetText(entry.icons .. "|cFFFFDD00" .. tostring(entry.npc) .. "|r <- " .. entry.cuttersText)
-        textLines[idx]:Show()
+        local row = GetOrCreatePanelRow(idx)
+        -- Column elements alignment
+        row.raidIcon:SetText(entry.raidIcon)
+        row.classIcon:SetText(entry.icons)
+        row.playerText:SetText(entry.cuttersText)
+        row.cdText:SetText(entry.cdText)
+        row:Show()
     end
-    panel:SetHeight(24 + idx * 14)
+    
+    -- Ocultar filas extras generadas previamente
+    for i = idx + 1, #panelRows do HidePanelRow(i) end
+    
+    -- Altura: 25px titulo+separador + 15px por linea + 5px padding inferior
+    panel:SetHeight(28 + idx * 15)
     panel:Show()
+    
+    -- Actualizar Nameplates por separado para evitar que errores UI oculten el panel
+    SafeCall("Nameplates", UpdateAllNameplates)
 end
 
 --------------------------------------------------------------
@@ -444,85 +637,155 @@ end
 --------------------------------------------------------------
 -- KEYBINDING VARIABLES
 --------------------------------------------------------------
-BINDING_HEADER_CORTIO_HEADER = "⚔ Cortio (Asignación de Cortes)"
-BINDING_NAME_CORTIO_TOGGLE_MARK = "Marcar/Desmarcar Objetivo"
+BINDING_HEADER_CORTIO_HEADER = "Cortio - Asignacion de Cortes"
+BINDING_NAME_CLICK_CortioMarkSABT_LeftButton = "Poner/Quitar Marca de Corte"
 
 --------------------------------------------------------------
--- ACCIÓN DE MARCAR Pura (Secure Path a través de Keybinding)
+-- SECURE ACTION BUTTONS para raid markers (WoW 12.0)
 --------------------------------------------------------------
--- Esta función DEBE ser global para que Bindings.xml pueda llamarla
-function Cortio_ToggleMark()
-    EnsurePlayerInfo()
-    if not playerName then return end
+local CortioMarkSABT = CreateFrame("Button", "CortioMarkSABT", UIParent, "SecureActionButtonTemplate")
+CortioMarkSABT:RegisterForClicks("AnyDown")
+CortioMarkSABT:SetAttribute("type", "macro")
+CortioMarkSABT:SetAttribute("macrotext", "/targetmarker 1")
+CortioMarkSABT:SetAttribute("markerSlot", 1)
+CortioMarkSABT:SetSize(1, 1)
+
+-- Asigna un icono automaticamente del 8 (Calavera) hacia abajo segun el grupo
+local function AutoAssignMarkerSlot()
+    if not IsInGroup() then return 8 end
+    local members = {}
+    if playerName then table.insert(members, playerName) end
     
-    -- Al dispararse desde un Hardware Event (Hardware Keybinding), el entorno
-    -- de ejecución es nativamente seguro, así que UnitName devuelve strings limpios.
-    -- Detectar qué unit token se está usando (target tiene prioridad sobre mouseover)
-    local sourceUnit = UnitExists("target") and "target" or (UnitExists("mouseover") and "mouseover" or nil)
-    if not sourceUnit then
-        print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
-        return
-    end
-    
-    local targetName = UnitName(sourceUnit)
-    if not targetName then
-        print("|cFF00FFFF[Cortio]|r Selecciona un objetivo primero.")
-        return
-    end
-    
-    local npUnit = FindNameplateUnit(sourceUnit)
-    local specIndex = GetSpecialization()
-    local specIcon = specIndex and select(4, GetSpecializationInfo(specIndex)) or "0"
-    
-    local isMarked = false
-    for _, mark in ipairs(activeMarks) do
-        if mark.playerName == playerName then
-            if npUnit and mark.nameplateUnit == npUnit then
-                isMarked = true
-                break
-            elseif not npUnit and mark.npcName == targetName then
-                isMarked = true
-                break
+    local prefix = IsInRaid() and "raid" or "party"
+    for i = 1, GetNumGroupMembers() do
+        local u = prefix .. i
+        if UnitExists(u) and not UnitIsUnit(u, "player") then
+            local n, r = UnitName(u)
+            if n then
+                table.insert(members, (r and r ~= "") and (n.."-"..r) or n)
             end
         end
     end
-    
-    local action = isMarked and "UNMARK" or "MARK"
-    
-    if action == "MARK" then
+    table.sort(members)
+    for i, name in ipairs(members) do
+        if name == playerName then
+            -- Por ejemplo: 1º=8(Calavera), 2º=7(Cruz), etc.
+            return math.max(1, 9 - i)
+        end
+    end
+    return 8
+end
+
+-- Función pura y rápida sin loops para no manchar (taint)
+local function GetPlayerMarkerSlotSafe()
+    if CortioDB and CortioDB.markerSlot and CortioDB.markerSlot > 0 then
+        return CortioDB.markerSlot
+    end
+    return AutoAssignMarkerSlot()
+end
+
+function Cortio_UpdateSecureBtnMacro()
+    if InCombatLockdown() then return end
+    local slot = GetPlayerMarkerSlotSafe()
+    CortioMarkSABT:SetAttribute("macrotext", "/targetmarker " .. tostring(slot))
+    CortioMarkSABT:SetAttribute("markerSlot", slot)
+end
+
+--------------------------------------------------------------
+-- ACCIÓN POST-MARCA: Sync AddonMessage y UI
+--------------------------------------------------------------
+local function HandlePostClick(self, button, down)
+    -- Evitamos ejecuciones duplicadas de teclados
+    if not down then return end
+
+    -- Retraso de 50ms para que GetRaidTargetIndex(target) reciba la info
+    C_Timer.After(0.05, function()
+        EnsurePlayerInfo()
+        if not playerName then return end
+
+        local sourceUnit = "target"
+        
+        if not UnitExists(sourceUnit) then
+            ClearPlayerMark(playerName)
+            UpdatePanel()
+            local ch
+            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
+            elseif IsInRaid() then ch = "RAID"
+            elseif IsInGroup() then ch = "PARTY"
+            end
+            if ch then
+                local msg = "UNMARK:"..(playerClass or "UNKNOWN")..":0:0:0:0"
+                local result = C_ChatInfo.SendAddonMessage(COMM_PREFIX, msg, ch)
+            end
+            print("|cFF00FFFF[Cortio]|r Corte retirado (sin objetivo).")
+            return
+        end
+
+        local slot = CortioMarkSABT:GetAttribute("markerSlot") or GetPlayerMarkerSlotSafe()
+
+        local targetName = UnitName(sourceUnit)
+        if not targetName then return end
+
+        local npUnit = FindNameplateUnit(sourceUnit)
+        local specIndex = GetSpecialization()
+        local specIcon = "0"
+        if specIndex then
+            local si = select(4, GetSpecializationInfo(specIndex))
+            if si then specIcon = tostring(si) end
+        end
+
+        local markId = math.random(10000, 99999)
+
         ClearPlayerMark(playerName)
-        table.insert(activeMarks, { 
-            npcName = targetName, 
-            playerName = playerName, 
+
+        table.insert(activeMarks, {
+            playerName = playerName,
             playerClass = playerClass,
-            specIcon = tostring(specIcon),
+            specIcon = specIcon,
             remoteCDEnd = 0,
             remoteCDDuration = 0,
-            nameplateUnit = npUnit
+            nameplateUnit = nil,
+            unitToken = "target",
+            markId = markId,
+            markerSlot = slot
         })
-        print("|cFF00FFFF[Cortio]|r Corte asignado a |cFFFFDD00" .. targetName .. "|r")
-    else
-        ClearPlayerMark(playerName)
-        print("|cFF00FFFF[Cortio]|r Corte retirado de |cFFFFDD00" .. targetName .. "|r")
-    end
-    
-    UpdatePanel()
-    
-    local channel
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        channel = "INSTANCE_CHAT"
-    elseif IsInRaid() then
-        channel = "RAID"
-    elseif IsInGroup() then
-        channel = "PARTY"
-    end
-    
-    if channel then
-        -- Formato: ACTION:CLASS:SPECICON:NPCNAME
-        -- (el nameplate token es local, no se envía por comms)
-        C_ChatInfo.SendAddonMessage(COMM_PREFIX, action..":"..playerClass..":"..tostring(specIcon)..":"..targetName, channel)
-    end
+        
+        local iconStr = GetRaidIconString(slot, 14)
+        print("|cFF00FFFF[Cortio]|r Corte asignado" .. (slot > 0 and (" " .. iconStr) or "") .. " |cFFFFDD00" .. tostring(targetName) .. "|r")
+        
+        if CortioDB and CortioDB.announce then
+            local ch
+            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
+            elseif IsInRaid() then ch = "RAID"
+            elseif IsInGroup() then ch = "PARTY"
+            end
+            if ch and slot > 0 then
+                local iconName = "{" .. (RAID_ICON_NAMES[slot] or "") .. "}"
+                SendChatMessage("[Cortio] Corte: " .. iconName .. " ➔ " .. ShortName(playerName), ch)
+            end
+        end
+
+        UpdatePanel()
+        UpdateAllNameplates()
+
+        local channel
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then channel = "INSTANCE_CHAT"
+        elseif IsInRaid() then channel = "RAID"
+        elseif IsInGroup() then channel = "PARTY"
+        end
+
+        if channel then
+            local msg = "MARK:"..(playerClass or "UNKNOWN")..":"..(specIcon or "0")..":"..(markId or "0")..":"..(slot or "0")..":0"
+            local result = C_ChatInfo.SendAddonMessage(COMM_PREFIX, msg, channel)
+            if result and Enum and Enum.SendAddonMessageResult and result ~= Enum.SendAddonMessageResult.Success then
+                LogError("Send", "AddonMsg fallo: " .. tostring(result))
+            end
+        end
+    end)
 end
+CortioMarkSABT:HookScript("PostClick", HandlePostClick)
+
+
 
 --------------------------------------------------------------
 -- SLASH COMMANDS (Bloqueado por Blizzard en 12.0)
@@ -534,13 +797,39 @@ SlashCmdList["CORTIO"] = function(msg)
     cmd = (cmd or ""):lower()
     
     if cmd == "mark" or cmd == "m" then
-        print("|cFF00FFFF[Cortio]|r |cFFFF0000ERROR CRÍTICO:|r Blizzard v12.0 prohibe leer enemigos usando macros (/ct m).")
-        print("|cFF00FFFF[Cortio]|r |cFFFFFFFFPara que funcione, debes usar un Atajo de Teclado nativo.|r")
-        print("|cFF00FFFF[Cortio]|r |cFFFFDD00Instrucciones: Pulsa ESC -> Opciones -> Atajos de Teclado -> AddOns -> Cortio -> Asigna tu tecla ahí.|r")
+        print("|cFF00FFFF[Cortio]|r |cFFFF0000ERROR CRITICO:|r Usa un Atajo de Teclado nativo (ESC > Opciones > Atajos > AddOns > Cortio).")
+    elseif cmd:match("^slot") then
+        local n = tonumber(cmd:match("%d+"))
+        if not CortioDB then CortioDB = {} end
+        if n and n >= 1 and n <= 8 then
+            CortioDB.markerSlot = n
+            print(string.format("|cFF00FFFF[Cortio]|r Slot asignado: %s %s",
+                GetRaidIconString(n, 14), RAID_ICON_NAMES[n] or tostring(n)))
+            Cortio_UpdateSecureBtnMacro()
+        elseif n == 0 then
+            CortioDB.markerSlot = 0
+            print("|cFF00FFFF[Cortio]|r Slot en modo automatico.")
+            Cortio_UpdateSecureBtnMacro()
+        else
+            local curr = (CortioDB and CortioDB.markerSlot or 0)
+            local currStr = curr > 0 and (GetRaidIconString(curr, 14) .. " slot " .. curr) or "automatico"
+            print("|cFF00FFFF[Cortio]|r Uso: /ct slot [1-8] | /ct slot 0 (auto) | actual: " .. currStr)
+            print("|cFF00FFFF[Cortio]|r Slots: 1=Estrella 2=Circulo 3=Diamante 4=Triangulo 5=Luna 6=Cuadrado 7=Cruz 8=Calavera")
+        end
     elseif cmd == "show" then
+        panel:SetAlpha(1)
         panel:Show()
     elseif cmd == "hide" then
         panel:Hide()
+    elseif cmd == "reset" then
+        if not CortioDB then CortioDB = {} end
+        CortioDB.scale = 1.0
+        panel:SetScale(1.0)
+        panel:ClearAllPoints()
+        panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
+        panel:SetAlpha(1)
+        panel:Show()
+        print("|cFF00FFFF[Cortio]|r Panel reiniciado y forzado en pantalla.")
     elseif cmd == "errors" then
         if CortioDB and CortioDB.errors and #CortioDB.errors > 0 then
             print("|cFF00FFFF[Cortio]|r Errores (" .. #CortioDB.errors .. "):")
@@ -562,35 +851,114 @@ end
 --------------------------------------------------------------
 -- EVENTOS
 --------------------------------------------------------------
+local function FindRosterPlayer(sender)
+    if CortioRoster[sender] then return sender end
+    local simpleName = strsplit("-", sender)
+    for k in pairs(CortioRoster) do
+        local kb = strsplit("-", k)
+        if kb == simpleName then return k end
+    end
+    return nil
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("CHAT_MSG_ADDON")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
+eventFrame:RegisterEvent("FORBIDDEN_NAME_PLATE_UNIT_ADDED")
+eventFrame:RegisterEvent("FORBIDDEN_NAME_PLATE_UNIT_REMOVED")
+eventFrame:RegisterEvent("UNIT_DIED")
+eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+eventFrame:RegisterEvent("INSPECT_READY")
+
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         EnsurePlayerInfo()
         if not CortioDB then CortioDB = {} end
         if not CortioDB.errors then CortioDB.errors = {} end
+        Cortio_UpdateSecureBtnMacro()
+        RebuildRoster()
         
-    elseif event == "NAME_PLATE_UNIT_ADDED" then
-        SafeCall("Nameplate_Add", UpdateNameplate, arg1)
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        Cortio_UpdateSecureBtnMacro()
         
-    elseif event == "NAME_PLATE_UNIT_REMOVED" then
+    elseif event == "NAME_PLATE_UNIT_ADDED" or event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
+        UpdateNameplate(arg1)
+    elseif event == "NAME_PLATE_UNIT_REMOVED" or event == "FORBIDDEN_NAME_PLATE_UNIT_REMOVED" then
         for _, mark in ipairs(activeMarks) do
             if mark.nameplateUnit == arg1 then
-                mark.nameplateUnit = nil  -- liberar token perdido
+                mark.nameplateUnit = nil
             end
         end
-        SafeCall("Nameplate_Remove", ReleaseNameplateFrame, arg1)
+        ReleaseNameplateFrame(arg1)
+        
+    elseif event == "GROUP_ROSTER_UPDATE" then
+        RebuildRoster()
+        UpdatePanel()
+        if not InCombatLockdown() then
+            Cortio_UpdateSecureBtnMacro()
+        end
+        
+    elseif event == "INSPECT_READY" then
+        inspectPending = false
+        for _, unit in pairs({"party1", "party2", "party3", "party4"}) do
+            if UnitExists(unit) and UnitGUID(unit) == arg1 then
+                local specId = GetInspectSpecialization(unit)
+                if specId and specId > 0 then
+                    local name, realm = UnitName(unit)
+                    local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+                    local specIcon = "0"
+                    local si = select(4, GetSpecializationInfoByID(specId))
+                    if si then specIcon = tostring(si) end
+                    specCache[fullName] = specIcon
+                    RebuildRoster()
+                    UpdatePanel()
+                end
+                break
+            end
+        end
+        C_Timer.After(0.3, ProcessInspectQueue)
+
+    elseif event == "UNIT_DIED" then
+        -- arg1 = token de la unidad que murio (puede ser "nameplateN", "target", etc.)
+        -- Compara con UnitIsUnit para detectar si el NPC marcado acabo de morir.
+        local cleared = false
+        for i = #activeMarks, 1, -1 do
+            local mark = activeMarks[i]
+            if mark.nameplateUnit then
+                local ok, isMatch = pcall(UnitIsUnit, mark.nameplateUnit, arg1)
+                if ok and isMatch then
+                    -- Si era nuestra propia marca, propagar UNMARK al grupo
+                    if mark.playerName == playerName then
+                        local ch
+                        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
+                        elseif IsInRaid() then ch = "RAID"
+                        elseif IsInGroup() then ch = "PARTY"
+                        end
+                        if ch then
+                            pcall(C_ChatInfo.SendAddonMessage, COMM_PREFIX,
+                                "UNMARK:" .. (playerClass or "UNKNOWN") .. ":0:0", ch)
+                        end
+                    end
+                    table.remove(activeMarks, i)
+                    cleared = true
+                end
+            end
+        end
+        if cleared then UpdatePanel() end
         
     elseif event == "CHAT_MSG_ADDON" then
         if arg1 == COMM_PREFIX then
             local sender = select(2, ...)
-            if sender == playerName then return end
+            local sName = strsplit("-", sender)
+            local pName = strsplit("-", playerName)
+            if sender == playerName or sName == pName then return end
             
-            local action, p2, p3, p4 = strsplit(":", arg2, 4)
+            local action, p2, p3, p4, p5, p6 = strsplit(":", arg2, 7)
+            local rPlayer = FindRosterPlayer(sender) or sender
             
             if action == "CD" then
                 local cdDuration = tonumber(p2)
@@ -598,15 +966,19 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                     SafeCall("Remote_CD", function()
                         local now = GetTime()
                         for _, mark in ipairs(activeMarks) do
-                            if mark.playerName == sender then
+                            if mark.playerName == rPlayer then
                                 mark.remoteCDEnd = now + cdDuration
                                 mark.remoteCDDuration = cdDuration
                             end
                         end
+                        if CortioRoster[rPlayer] then
+                            CortioRoster[rPlayer].cdEnd = now + cdDuration
+                            CortioRoster[rPlayer].cdTotal = cdDuration
+                        end
                         for _, f in pairs(activeNameplates) do
                             if f and f.icons then
                                 for _, ic in ipairs(f.icons) do
-                                    if ic:IsShown() and ic.ownerName == sender and not ic.isLocal then
+                                    if ic:IsShown() and ic.ownerName == rPlayer and not ic.isLocal then
                                         ic.cooldown:SetCooldown(now, cdDuration)
                                     end
                                 end
@@ -614,23 +986,48 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                         end
                     end)
                 end
-            elseif action and p2 and p4 then
-                local cls, specIcon, npcName = p2, p3, p4
+            elseif action and p2 and p3 then
+                local cls, specIcon, markIdStr, markerSlotStr = p2, p3, p4, p5
+                local tGUID = (p6 and p6 ~= "") and p6 or nil
+                local mId = markIdStr and tonumber(markIdStr) or nil
+                local markerSlot = markerSlotStr and tonumber(markerSlotStr) or 0
                 if action == "MARK" then
-                    ClearPlayerMark(sender)
-                    table.insert(activeMarks, { 
-                        npcName = npcName, 
-                        playerName = sender, 
+                    ClearPlayerMark(rPlayer)
+                    local uToken = nil
+                    if GetNumGroupMembers() > 0 then
+                        local prefix = IsInRaid() and "raid" or "party"
+                        for i = 1, GetNumGroupMembers() do
+                            local u = prefix .. i
+                            if UnitExists(u) then
+                                local n, r = UnitName(u)
+                                if n then
+                                    local fN = (r and r ~= "") and (n.."-"..r) or n
+                                    local sN = strsplit("-", rPlayer)
+                                    if fN == rPlayer or n == sN then
+                                        uToken = u .. "target"
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    
+                    local newMark = {
+                        playerName = rPlayer,
                         playerClass = cls,
                         specIcon = specIcon,
                         remoteCDEnd = 0,
                         remoteCDDuration = 0,
-                        nameplateUnit = nil
-                    })
+                        nameplateUnit = nil,
+                        unitToken = uToken,
+                        markerSlot = markerSlot
+                    }
+                    table.insert(activeMarks, newMark)
                 elseif action == "UNMARK" then
-                    ClearPlayerMark(sender)
+                    ClearPlayerMark(rPlayer)
                 end
                 UpdatePanel()
+                UpdateAllNameplates()
             end
         end
     end
@@ -649,6 +1046,12 @@ castDetectFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
     -- Nuestro interrupt se ha lanzado con éxito → broadcast CD al grupo
     local cdDuration = CLASS_INTERRUPT_CD[playerClass]
     if not cdDuration then return end
+    
+    -- Aplicar localmente también
+    if CortioRoster[playerName] then
+        CortioRoster[playerName].cdEnd = GetTime() + cdDuration
+        CortioRoster[playerName].cdTotal = cdDuration
+    end
     
     local channel
     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
@@ -696,22 +1099,17 @@ kickCooldown:SetDrawBling(true)     -- destello al terminar el CD
 kickCooldown:SetSwipeColor(0, 0, 0, 0.65)  -- negro semitransparente
 kickCooldown:SetHideCountdownNumbers(false) -- mostrar números de CD si el usuario los tiene activados
 
--- Actualizar el cooldown del icono
+-- Actualizar el cooldown del icono local
 local myInterruptSpellID = nil
 
 local function UpdateKickCooldown()
-    if not myInterruptSpellID then return end
-    -- WoW 12.0: start y duration son "secret numbers" (tainted).
-    -- NO se pueden comparar en Lua (>, <, ==, ~= dan error de taint).
-    -- SetCooldown ES un widget seguro que acepta valores tainted directamente.
-    -- Si duration=0, el CooldownFrame simplemente no muestra nada.
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local info = C_Spell.GetSpellCooldown(myInterruptSpellID)
-        if info then
-            kickCooldown:SetCooldown(info.startTime, info.duration)
-        end
-    elseif GetSpellCooldown then
-        kickCooldown:SetCooldown(GetSpellCooldown(myInterruptSpellID))
+    if not myInterruptSpellID or not CortioRoster[playerName] then return end
+    local cdEnd = CortioRoster[playerName].cdEnd
+    local cdTotal = CortioRoster[playerName].cdTotal
+    if cdEnd and cdTotal and cdEnd > GetTime() then
+        kickCooldown:SetCooldown(cdEnd - cdTotal, cdTotal)
+    else
+        kickCooldown:SetCooldown(0, 0)
     end
 end
 
@@ -733,19 +1131,11 @@ local function SetupKickIcon()
     UpdateKickCooldown()
 end
 
--- Frame de eventos dedicado al cooldown
 local cdEventFrame = CreateFrame("Frame")
-cdEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-cdEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 cdEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-
 cdEventFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_ENTERING_WORLD" then
-        SafeCall("KickIcon_Setup", SetupKickIcon)
-    else
-        SafeCall("KickIcon_CD", UpdateKickCooldown)
-        -- También refrescar cooldowns en los iconos de nameplate
-        SafeCall("KickIcon_NP", UpdateNameplateCooldowns)
+        SetupKickIcon()
     end
 end)
 
@@ -764,4 +1154,74 @@ end)
 kickIconFrame:Hide()
 
 panel:Hide()
-print("|cFF00FFFF[Cortio]|r Cargado. Macro: /ct m")
+
+local ticker = 0
+panel:SetScript("OnUpdate", function(self, elapsed)
+    ticker = ticker + elapsed
+    if ticker >= 0.25 then
+        ticker = 0
+        if self:IsShown() then
+            UpdatePanel()
+        end
+        -- El Nameplate scanner debe correr SIEMPRE en background para enlazar
+        -- instantaneamente las nuevas marcas de grupo que puedan entrar en pantalla.
+        UpdateAllNameplates()
+    end
+end)
+
+--------------------------------------------------------------
+-- SETTINGS PANEL
+--------------------------------------------------------------
+local function CreateSettingsMenu()
+    if not Settings or not Settings.RegisterVerticalLayoutCategory then return end
+    
+    local category = Settings.RegisterVerticalLayoutCategory("Cortio")
+    
+    local scaleSetting = Settings.RegisterProxySetting(
+        category, "Cortio_Scale", Settings.VarType.Number, "Tamaño de la Ventana", 
+        (CortioDB and CortioDB.scale) or 1.0, 
+        function() return (CortioDB and CortioDB.scale) or 1.0 end,
+        function(val) 
+            if not CortioDB then CortioDB = {} end
+            CortioDB.scale = val 
+            panel:SetScale(val) 
+        end
+    )
+    local scaleOpts = Settings.CreateSliderOptions(0.5, 2.0, 0.05)
+    scaleOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return string.format("%.2fx", v) end)
+    Settings.CreateSlider(category, scaleSetting, scaleOpts, "Ajusta la escala del panel flotante.")
+    
+    local announceSetting = Settings.RegisterProxySetting(
+        category, "Cortio_Announce", Settings.VarType.Boolean, "Anunciar asignaciones en grupo", 
+        (not CortioDB or CortioDB.announce == nil) and true or CortioDB.announce, 
+        function() return (not CortioDB or CortioDB.announce == nil) and true or CortioDB.announce end,
+        function(val) 
+            if not CortioDB then CortioDB = {} end
+            CortioDB.announce = val 
+        end
+    )
+    Settings.CreateCheckbox(category, announceSetting, "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca.")
+    
+    local testSetting = Settings.RegisterProxySetting(
+        category, "Cortio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
+        (CortioDB and CortioDB.testMode) or false, 
+        function() return (CortioDB and CortioDB.testMode) or false end,
+        function(val) 
+            if not CortioDB then CortioDB = {} end
+            CortioDB.testMode = val
+            RebuildRoster()
+            if val then panel:Show() else panel:Hide() end
+        end
+    )
+    Settings.CreateCheckbox(category, testSetting, "Genera un grupo falso para probar la interfaz de cortes.")
+    
+    Settings.RegisterAddOnCategory(category)
+end
+
+-- Aplicar escala guardada
+C_Timer.After(0.5, function()
+    if CortioDB and CortioDB.scale then panel:SetScale(CortioDB.scale) end
+    CreateSettingsMenu()
+end)
+
+print("|cFF00FFFF[Cortio]|r Cargado. Asigna la tecla en: ESC -> Atajos -> AddOns -> Cortio")
