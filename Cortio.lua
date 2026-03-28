@@ -165,21 +165,21 @@ local CLASS_COLORS = {
     EVOKER="FF33937F",
 }
 
--- Iconos de corte de cada clase (FileDataID para evitar problemas de compatibilidad)
+-- Iconos de corte de cada clase (FileDataID verificado en wago.tools para parche 12.0)
 local CLASS_INTERRUPT_ICONS = {
-    WARRIOR = "132344",       -- Zurrar
-    PALADIN = "135966",       -- Reprimenda
-    HUNTER = "135250",        -- Disparo contrarrestante
-    ROGUE = "132219",         -- Patada
-    PRIEST = "136154",        -- Silencio
-    DEATHKNIGHT = "136173",   -- Helada mental
-    SHAMAN = "136018",        -- Corte de viento
-    MAGE = "135856",          -- Contrahechizo
-    WARLOCK = "136174",       -- Bloqueo de hechizo
-    MONK = "606547",          -- Golpe de mano de lanza
-    DRUID = "132114",         -- Testarazo
-    DEMONHUNTER = "1323326",  -- Interrumpir
-    EVOKER = "4623131",       -- Sofocar
+    WARRIOR     = "132938",   -- Pummel          (inv_gauntlets_04)
+    PALADIN     = "523893",   -- Rebuke           (spell_holy_rebuke)
+    HUNTER      = "249170",   -- Counter Shot     (inv_ammo_arrow_03)
+    ROGUE       = "132219",   -- Kick             (ability_kick)             ✓
+    PRIEST      = "458230",   -- Silence          (ability_priest_silence)
+    DEATHKNIGHT = "237527",   -- Mind Freeze      (spell_deathknight_mindfreeze)
+    SHAMAN      = "136018",   -- Wind Shear       (spell_nature_cyclone)     ✓
+    MAGE        = "135856",   -- Counterspell     (spell_frost_iceshock)     ✓
+    WARLOCK     = "136174",   -- Spell Lock       (spell_shadow_mindrot)     ✓
+    MONK        = "608940",   -- Spear Hand Strike(ability_monk_spearhand)
+    DRUID       = "133732",   -- Skull Bash       (inv_misc_bone_taurenskull_01)
+    DEMONHUNTER = "1305153",  -- Disrupt          (ability_demonhunter_consumemagic)
+    EVOKER      = "4622469",  -- Quell            (ability_evoker_quell)
 }
 
 -- Spell IDs de interrupt por clase (necesario antes de ApplyLocalCooldown)
@@ -202,20 +202,22 @@ local CLASS_INTERRUPT_SPELLID = {
 -- Cooldown base (segundos) de cada interrupt — para compartir con otros jugadores
 -- (valores base sin talentos; suficiente para feedback visual)
 local CLASS_INTERRUPT_CD = {
-    WARRIOR     = 15,
-    PALADIN     = 15,
-    HUNTER      = 24,
-    ROGUE       = 15,
-    PRIEST      = 45,
-    DEATHKNIGHT = 15,
-    SHAMAN      = 12,
-    MAGE        = 24,
-    WARLOCK     = 24,
-    MONK        = 15,
-    DRUID       = 15,
-    DEMONHUNTER = 15,
-    EVOKER      = 40,
+    WARRIOR     = 15,   -- Pummel
+    PALADIN     = 15,   -- Rebuke
+    HUNTER      = 24,   -- Counter Shot / Muzzle (Survival)
+    ROGUE       = 15,   -- Kick
+    PRIEST      = 45,   -- Silence
+    DEATHKNIGHT = 15,   -- Mind Freeze
+    SHAMAN      = 12,   -- Wind Shear
+    MAGE        = 24,   -- Counterspell base (talentos pueden reducir a 20s)
+    WARLOCK     = 24,   -- Spell Lock
+    MONK        = 15,   -- Spear Hand Strike
+    DRUID       = 15,   -- Skull Bash
+    DEMONHUNTER = 15,   -- Disrupt
+    EVOKER      = 40,   -- Quell
 }
+-- NOTA: estos valores son CDs BASE sin talentos. Para el jugador LOCAL, Cortio
+-- lee el CD real de C_Spell.GetSpellCooldown() al hacer el corte (incluye talentos).
 
 -- Lookup inverso: spellID → true (para detectar casts rápido)
 local INTERRUPT_SPELLID_SET = {}
@@ -231,12 +233,26 @@ end
 
 
 --------------------------------------------------------------
+-- Bypass Tainted Secret Booleans (WoW 12.0 API Crash)
+-- UnitIsUnit(partyNtarget, nameplateX) devuelve un 'secret boolean'.
+-- Evaluarlo en un 'if' directo crashea Lua. Usamos doble-pcall.
+--------------------------------------------------------------
+local function SafeIsMatch(token, npUnit)
+    if not token or not npUnit then return false end
+    local ok, match = pcall(UnitIsUnit, token, npUnit)
+    if not ok then return false end
+    local evalOk, evalResult = pcall(function() return match == true end)
+    if not evalOk then return false end
+    return evalResult
+end
+
+--------------------------------------------------------------
 -- HELPER: buscar qué nameplateN corresponde a un unit token
 --------------------------------------------------------------
 local function FindNameplateUnit(unit)
     for i = 1, 40 do
         local npUnit = "nameplate" .. i
-        if UnitExists(npUnit) and UnitIsUnit(npUnit, unit) then
+        if UnitExists(npUnit) and SafeIsMatch(npUnit, unit) then
             return npUnit
         end
     end
@@ -324,36 +340,40 @@ end
 
 -- ApplyLocalCooldown se elimina porque todo se unifica en UpdateNameplate
 
--- Bypass Tainted Secret Booleans (WoW 12.0 API Crash)
--- La API 'UnitIsUnit(partyNtarget, nameplateX)' ahora devuelve un 'secret boolean' si no es tu objetivo directo.
--- Si intentamos leer este boolean en un 'if', el motor Lua colapsa de inmediato por Execution Taint.
--- Solucion: Evaluamos la igualdad boolean dentro de un 'pcall' secundario. Si explota, lo absorbemos y retornamos falso.
-local function SafeIsMatch(token, npUnit)
-    if not token or not npUnit then return false end
-    local ok, match = pcall(UnitIsUnit, token, npUnit)
-    if not ok then return false end
-    
-    local evalOk, evalResult = pcall(function() return match == true end)
-    if not evalOk then return false end
-    return evalResult
-end
-
+-- Ya no intentamos leer GetRaidTargetIndex ni propiedades visuales de nameplates directamente, Blizzard lo marca como secret properties y revienta Lua incluso dentro de pcall.
 local function UpdateNameplate(unit)
     local marks = {}
 
     for _, mark in ipairs(activeMarks) do
-        -- Si esta marca ya está anclada permanentemente a este Nameplate, se queda.
+        local isMatch = false
+        
+        -- Cache permanente: si ya sabemos el nameplateUnit, match directo.
         if mark.nameplateUnit == unit then
-            table.insert(marks, mark)
-        -- Si la marca aún no tiene ancla, y el jugador tiene al objetivo en la mira (target/partyNtarget)
-        elseif not mark.nameplateUnit then
-            if mark.unitToken and UnitExists(mark.unitToken) then
-                -- Intentamos cazar el Nameplate activo de forma segura evadiendo el Taint
-                if SafeIsMatch(mark.unitToken, unit) then
-                    mark.nameplateUnit = unit
-                    table.insert(marks, mark)
+            isMatch = true
+        elseif not mark.nameplateUnit and mark.unitToken then
+            -- GetNamePlateForUnit solo acepta tokens SIMPLES ("target", "nameplate4").
+            -- Tokens compuestos ("party1target") son rechazados A NIVEL C++ incluso dentro de pcall,
+            -- disparando el diálogo de "acción bloqueada" de Blizzard. Nunca los pasamos.
+            if mark.unitToken == "target" and UnitExists("target") then
+                local targetNP = C_NamePlate.GetNamePlateForUnit("target")
+                local unitNP   = C_NamePlate.GetNamePlateForUnit(unit)
+                if targetNP and unitNP and targetNP == unitNP then
+                    isMatch = true
+                    mark.unitToken = nil  -- ancla fijada, descartamos el puntero dinámico
                 end
+            else
+                -- Token compuesto remoto: imposible anclar en WoW 12.0.
+                -- Icono del compañero solo aparecerá en el panel lateral.
+                mark.unitToken = nil
             end
+        end
+
+        if isMatch then
+            mark.nameplateUnit = unit
+            table.insert(marks, mark)
+        -- Si esta placa antes era nuestra pero ya no cumple (ej. perdió la marca de banda o cambió el objetivo)
+        elseif mark.nameplateUnit == unit then
+            mark.nameplateUnit = nil
         end
     end
     
@@ -451,7 +471,16 @@ local function ProcessInspectQueue()
     local unit = table.remove(inspectQueue, 1)
     if UnitExists(unit) and CanInspect(unit) then
         inspectPending = true
-        NotifyInspect(unit)
+        -- C_Timer.After: NotifyInspect desde frame limpio para evitar el diálogo
+        -- de "acción bloqueada" cuando se llama desde event handlers taintados (M+).
+        C_Timer.After(0, function()
+            if UnitExists(unit) and CanInspect(unit) then
+                NotifyInspect(unit)
+            else
+                inspectPending = false
+                C_Timer.After(0.5, ProcessInspectQueue)
+            end
+        end)
     else
         if UnitExists(unit) then
             C_Timer.After(2, function()
@@ -653,26 +682,18 @@ CortioMarkSABT:SetSize(1, 1)
 -- Asigna un icono automaticamente del 8 (Calavera) hacia abajo segun el grupo
 local function AutoAssignMarkerSlot()
     if not IsInGroup() then return 8 end
-    local members = {}
-    if playerName then table.insert(members, playerName) end
-    
-    local prefix = IsInRaid() and "raid" or "party"
-    for i = 1, GetNumGroupMembers() do
-        local u = prefix .. i
-        if UnitExists(u) and not UnitIsUnit(u, "player") then
-            local n, r = UnitName(u)
-            if n then
-                table.insert(members, (r and r ~= "") and (n.."-"..r) or n)
+    -- TAINT-SAFE: NO usamos UnitName("partyX") — en instancias devuelve secret strings
+    -- que contaminan el frame de ejecucion y bloquean el SetAttribute posterior.
+    -- En su lugar, buscamos el indice del jugador comparando con "player" (siempre seguro).
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            if UnitIsUnit("raid"..i, "player") then
+                return math.max(1, 9 - i)  -- 1º=Skull(8), 2º=Cross(7), etc.
             end
         end
     end
-    table.sort(members)
-    for i, name in ipairs(members) do
-        if name == playerName then
-            -- Por ejemplo: 1º=8(Calavera), 2º=7(Cruz), etc.
-            return math.max(1, 9 - i)
-        end
-    end
+    -- En party el jugador no aparece como partyX: devolver 8 (Skull) por defecto.
+    -- El usuario puede cambiar con /ct slot N.
     return 8
 end
 
@@ -726,7 +747,6 @@ local function HandlePostClick(self, button, down)
         local targetName = UnitName(sourceUnit)
         if not targetName then return end
 
-        local npUnit = FindNameplateUnit(sourceUnit)
         local specIndex = GetSpecialization()
         local specIcon = "0"
         if specIndex then
@@ -760,8 +780,10 @@ local function HandlePostClick(self, button, down)
             elseif IsInGroup() then ch = "PARTY"
             end
             if ch and slot > 0 then
-                local iconName = "{" .. (RAID_ICON_NAMES[slot] or "") .. "}"
-                SendChatMessage("[Cortio] Corte: " .. iconName .. " ➔ " .. ShortName(playerName), ch)
+                -- {rt1}=Estrella {rt2}=Circulo {rt3}=Diamante {rt4}=Triangulo
+                -- {rt5}=Luna {rt6}=Cuadrado {rt7}=Cruz {rt8}=Calavera
+                local chatIcon = "{rt" .. slot .. "}"
+                SendChatMessage("[Cortio] " .. chatIcon .. " Corte a %t >> " .. ShortName(playerName), ch)
             end
         end
 
@@ -879,11 +901,14 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         EnsurePlayerInfo()
         if not CortioDB then CortioDB = {} end
         if not CortioDB.errors then CortioDB.errors = {} end
-        Cortio_UpdateSecureBtnMacro()
+        -- C_Timer.After: frame limpio para SetAttribute (evita blocked-action
+        -- si PLAYER_ENTERING_WORLD desencadena taint antes de la llamada).
+        C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
         RebuildRoster()
         
     elseif event == "PLAYER_REGEN_ENABLED" then
-        Cortio_UpdateSecureBtnMacro()
+        -- C_Timer.After(0): frame limpio, sin taint del evento anterior
+        C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
         
     elseif event == "NAME_PLATE_UNIT_ADDED" or event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
         UpdateNameplate(arg1)
@@ -896,10 +921,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
-        RebuildRoster()
+        RebuildRoster()   -- puede taintar el frame (UnitName de party en instancias)
         UpdatePanel()
         if not InCombatLockdown() then
-            Cortio_UpdateSecureBtnMacro()
+            -- C_Timer.After(0): SetAttribute se ejecuta en frame LIMPIO, separado del taint
+            C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
         end
         
     elseif event == "INSPECT_READY" then
@@ -928,33 +954,58 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         local cleared = false
         for i = #activeMarks, 1, -1 do
             local mark = activeMarks[i]
+            local shouldClear = false
+
             if mark.nameplateUnit then
-                local ok, isMatch = pcall(UnitIsUnit, mark.nameplateUnit, arg1)
-                if ok and isMatch then
-                    -- Si era nuestra propia marca, propagar UNMARK al grupo
-                    if mark.playerName == playerName then
-                        local ch
-                        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
-                        elseif IsInRaid() then ch = "RAID"
-                        elseif IsInGroup() then ch = "PARTY"
-                        end
-                        if ch then
-                            pcall(C_ChatInfo.SendAddonMessage, COMM_PREFIX,
-                                "UNMARK:" .. (playerClass or "UNKNOWN") .. ":0:0", ch)
-                        end
-                    end
-                    table.remove(activeMarks, i)
-                    cleared = true
+                -- Caso 1: comparación directa (rápida, cubre el 99% de casos en mazmorra)
+                if mark.nameplateUnit == arg1 then
+                    shouldClear = true
+                -- Caso 2: SafeIsMatch fallback: boss1 vs nameplate4 apuntan al mismo unit
+                elseif SafeIsMatch(mark.nameplateUnit, arg1) then
+                    shouldClear = true
                 end
+            end
+
+            -- Caso 3: la mark del jugador local no tiene nameplateUnit aun (recién puesta)
+            -- y arg1 == "target" significa que el objetivo actual acaba de morir
+            if not shouldClear and mark.playerName == playerName
+               and not mark.nameplateUnit and arg1 == "target" then
+                shouldClear = true
+            end
+
+            if shouldClear then
+                -- Si era nuestra propia marca, propagar UNMARK al grupo
+                if mark.playerName == playerName then
+                    local ch
+                    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
+                    elseif IsInRaid() then ch = "RAID"
+                    elseif IsInGroup() then ch = "PARTY"
+                    end
+                    if ch then
+                        pcall(C_ChatInfo.SendAddonMessage, COMM_PREFIX,
+                            "UNMARK:" .. (playerClass or "UNKNOWN") .. ":0:0", ch)
+                    end
+                end
+                table.remove(activeMarks, i)
+                cleared = true
             end
         end
         if cleared then UpdatePanel() end
         
     elseif event == "CHAT_MSG_ADDON" then
         if arg1 == COMM_PREFIX then
-            local sender = select(2, ...)
+            -- CHAT_MSG_ADDON args: prefix(arg1), text(arg2), channel, sender, target, ...
+            -- '...' aqui = channel, sender, target, ... => sender es select(2, ...)
+            -- PERO en el handler (self, event, arg1, arg2, ...) el '...' empieza en arg3
+            -- arg3=channel, arg4=sender => sender = select(2, ...) es CORRECTO solo si
+            -- los args extra incluyen channel como 1er elemento.
+            -- Verificado: CHAT_MSG_ADDON payload: prefix, text, channelType, sender, ...
+            -- Con arg1=prefix, arg2=text, el vararg '...' = channelType, sender, target, ...
+            -- Por tanto sender = select(2, ...) apunta al 2do elemento de '...' = SENDER ✓
+            local _, sender = ...   -- _ = channelType, sender = sender
+            if not sender then return end
             local sName = strsplit("-", sender)
-            local pName = strsplit("-", playerName)
+            local pName = playerName and strsplit("-", playerName) or ""
             if sender == playerName or sName == pName then return end
             
             local action, p2, p3, p4, p5, p6 = strsplit(":", arg2, 7)
@@ -984,6 +1035,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                                 end
                             end
                         end
+                        -- Fix 5: refrescar panel inmediatamente al recibir CD remoto
+                        UpdatePanel()
                     end)
                 end
             elseif action and p2 and p3 then
@@ -1036,34 +1089,87 @@ end)
 --------------------------------------------------------------
 -- DETECCIÓN DE CAST DE INTERRUPCIÓN → BROADCAST CD
 --------------------------------------------------------------
+-- Fix: forward declaration para que el closure del handler vea UpdateKickCooldown
+-- (se define más abajo junto a kickCooldown, pero la referencia en el closure
+-- se resuelve en tiempo de ejecución gracias a la upvalue capturada aquí).
+local UpdateKickCooldown  -- forward declaration
+local lastInterruptBroadcastTime = 0
+
 local castDetectFrame = CreateFrame("Frame")
 castDetectFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-castDetectFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
-    if unit ~= "player" then return end
-    if not INTERRUPT_SPELLID_SET[spellID] then return end
-    if not playerClass then return end
+castDetectFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+castDetectFrame:SetScript("OnEvent", function(self, event, ...)
+    local isInterrupt = false
+    local cdDuration = 15
     
-    -- Nuestro interrupt se ha lanzado con éxito → broadcast CD al grupo
-    local cdDuration = CLASS_INTERRUPT_CD[playerClass]
-    if not cdDuration then return end
-    
-    -- Aplicar localmente también
-    if CortioRoster[playerName] then
-        CortioRoster[playerName].cdEnd = GetTime() + cdDuration
-        CortioRoster[playerName].cdTotal = cdDuration
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local unit, castGUID, spellID = ...
+        if unit == "player" and INTERRUPT_SPELLID_SET[spellID] and playerClass then
+            isInterrupt = true
+            -- NOTA API: C_Spell.GetSpellCooldown NO devuelve valores actualizados
+            -- inmediatamente en UNIT_SPELLCAST_SUCCEEDED (ver warcraft.wiki.gg).
+            -- Usamos CLASS_INTERRUPT_CD como fallback; SPELL_INTERRUPT lee el CD real.
+            cdDuration = CLASS_INTERRUPT_CD[playerClass] or 15
+        end
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        local timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellId, spellName = CombatLogGetCurrentEventInfo()
+        if subevent == "SPELL_INTERRUPT" and sourceName then
+            local sName = strsplit("-", sourceName)
+            local pName = playerName and strsplit("-", playerName) or ""
+            if sName == pName and playerClass then
+                -- Jugador LOCAL: leer CD real incluyendo talentos
+                isInterrupt = true
+                local interruptSpellID = myInterruptSpellID or CLASS_INTERRUPT_SPELLID[playerClass]
+                local realCD = nil
+                if interruptSpellID and C_Spell and C_Spell.GetSpellCooldown then
+                    local cdInfo = C_Spell.GetSpellCooldown(interruptSpellID)
+                    if cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
+                        realCD = cdInfo.duration
+                    end
+                end
+                cdDuration = realCD or CLASS_INTERRUPT_CD[playerClass] or 15
+            else
+                -- Jugador REMOTO (con o sin Cortio): actualizar su CD localmente desde el log.
+                -- SPELL_INTERRUPT es visible para TODOS los clientes del grupo,
+                -- así que cada uno lo procesa independientemente sin necesidad de addon.
+                local rPlayer = FindRosterPlayer(sourceName)
+                if rPlayer and CortioRoster[rPlayer] then
+                    local rClass = CortioRoster[rPlayer].class
+                    local rCD = CLASS_INTERRUPT_CD[rClass] or 15
+                    local now = GetTime()
+                    CortioRoster[rPlayer].cdEnd   = now + rCD
+                    CortioRoster[rPlayer].cdTotal  = rCD
+                    UpdatePanel()
+                end
+            end
+        end
     end
     
-    local channel
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        channel = "INSTANCE_CHAT"
-    elseif IsInRaid() then
-        channel = "RAID"
-    elseif IsInGroup() then
-        channel = "PARTY"
-    end
-    
-    if channel then
-        C_ChatInfo.SendAddonMessage(COMM_PREFIX, "CD:" .. cdDuration, channel)
+    if isInterrupt then
+        -- Fix 3: guard anti-doble-disparo (1 segundo de ventana)
+        local now = GetTime()
+        if now - lastInterruptBroadcastTime < 1 then return end
+        lastInterruptBroadcastTime = now
+        
+        -- Aplicar localmente
+        if CortioRoster[playerName] then
+            CortioRoster[playerName].cdEnd = now + cdDuration
+            CortioRoster[playerName].cdTotal = cdDuration
+        end
+        
+        -- Fix 2: refrescar UI local inmediatamente sin esperar el ticker
+        UpdatePanel()
+        UpdateKickCooldown()
+        
+        local channel
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then channel = "INSTANCE_CHAT"
+        elseif IsInRaid() then channel = "RAID"
+        elseif IsInGroup() then channel = "PARTY"
+        end
+        
+        if channel then
+            C_ChatInfo.SendAddonMessage(COMM_PREFIX, "CD:" .. cdDuration, channel)
+        end
     end
 end)
 
@@ -1102,7 +1208,7 @@ kickCooldown:SetHideCountdownNumbers(false) -- mostrar números de CD si el usua
 -- Actualizar el cooldown del icono local
 local myInterruptSpellID = nil
 
-local function UpdateKickCooldown()
+UpdateKickCooldown = function()  -- asigna la forward declaration de arriba
     if not myInterruptSpellID or not CortioRoster[playerName] then return end
     local cdEnd = CortioRoster[playerName].cdEnd
     local cdTotal = CortioRoster[playerName].cdTotal
