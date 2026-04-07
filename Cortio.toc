@@ -5,4 +5,10 @@
 ## Version: 1.0
 ## SavedVariables: CortioDB
 
+CortioTaint.lua
+CortioData.lua
+CortioNet.lua
+CortioRoster.lua
+CortioMarks.lua
+CortioUI.lua
 Cortio.lua

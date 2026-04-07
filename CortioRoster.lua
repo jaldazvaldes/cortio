@@ -1,0 +1,244 @@
+--------------------------------------------------------------
+-- CORTIO - Roster & Inspect
+--------------------------------------------------------------
+Cortio = Cortio or {}
+Cortio.Roster = {}
+
+Cortio.PlayerName = nil
+Cortio.PlayerClass = nil
+Cortio.RosterList = {}
+Cortio.InspectQueue = {}
+local inspectPending = false
+local specCache = {}
+
+function Cortio.Roster:EnsurePlayerInfo()
+    if not Cortio.PlayerName then
+        local raw = UnitName("player")
+        if raw then
+            local ok, cleanN = pcall(string.format, "%s", raw)
+            local n = ok and cleanN or raw
+            local _, r = UnitName("player")
+            local cleanR = nil
+            if r and r ~= "" then
+                local okR, cr = pcall(string.format, "%s", r)
+                cleanR = okR and cr or r
+            end
+            Cortio.PlayerName = cleanR and (n .. "-" .. cleanR) or n
+            local _, cls = UnitClass("player")
+            Cortio.PlayerClass = cls
+        end
+    end
+end
+
+function Cortio.Roster:ProcessInspectQueue()
+    if inspectPending or #Cortio.InspectQueue == 0 then return end
+    local unit = table.remove(Cortio.InspectQueue, 1)
+    if UnitExists(unit) and CanInspect(unit) then
+        inspectPending = true
+        C_Timer.After(0, function()
+            if UnitExists(unit) and CanInspect(unit) then
+                NotifyInspect(unit)
+            else
+                inspectPending = false
+                C_Timer.After(0.5, function() Cortio.Roster:ProcessInspectQueue() end)
+            end
+        end)
+    else
+        if UnitExists(unit) then
+            C_Timer.After(2, function()
+                table.insert(Cortio.InspectQueue, unit)
+                Cortio.Roster:ProcessInspectQueue()
+            end)
+        end
+        C_Timer.After(0.1, function() Cortio.Roster:ProcessInspectQueue() end)
+    end
+end
+
+function Cortio.Roster:Rebuild()
+    Cortio.Roster:EnsurePlayerInfo()
+    local newRoster = {}
+    local function AddUnit(unit)
+        local rawName, realm = UnitName(unit)
+        if not rawName then return end
+        local okN, cleanName = pcall(string.format, "%s", rawName)
+        cleanName = okN and cleanName or rawName
+        local cleanRealm = nil
+        if realm and realm ~= "" then
+            local okR, cr = pcall(string.format, "%s", realm)
+            cleanRealm = okR and cr or nil
+        end
+        local fullName = cleanRealm and (cleanName .. "-" .. cleanRealm) or cleanName
+        local _, class = UnitClass(unit)
+        if fullName and class then
+            local specIcon = "0"
+            if UnitIsUnit(unit, "player") then
+                local specIndex = GetSpecialization()
+                if specIndex then
+                    local si = select(4, GetSpecializationInfo(specIndex))
+                    if si then specIcon = tostring(si) end
+                end
+            elseif specCache[fullName] then
+                specIcon = specCache[fullName]
+            else
+                local inQueue = false
+                for _, u in ipairs(Cortio.InspectQueue) do
+                    if UnitIsUnit(u, unit) then inQueue = true break end
+                end
+                if not inQueue then
+                    table.insert(Cortio.InspectQueue, unit)
+                    Cortio.Roster:ProcessInspectQueue()
+                end
+            end
+            
+            local old = Cortio.RosterList[fullName]
+            newRoster[fullName] = {
+                unit = unit,
+                class = class,
+                specIcon = specIcon,
+                cdEnd = old and old.cdEnd or 0,
+                cdTotal = old and old.cdTotal or (Cortio.Data.CLASS_INTERRUPT_CD[class] or 15)
+            }
+            if UnitIsUnit(unit, "player") then
+                Cortio.PlayerName = fullName
+            end
+        end
+    end
+    
+    if CortioDB and CortioDB.testMode then
+        Cortio.RosterList = {
+            [Cortio.PlayerName or "Jugador"] = { unit="player", class=Cortio.PlayerClass or "HUNTER", specIcon="132111", cdEnd=0, cdTotal=15 },
+            ["Aliado1"] = { unit="party1", class="WARRIOR", specIcon="132344", cdEnd=GetTime()+5, cdTotal=15 },
+            ["Aliado2"] = { unit="party2", class="MAGE", specIcon="135856", cdEnd=0, cdTotal=24 },
+        }
+        return
+    end
+
+    AddUnit("player")
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do AddUnit("raid"..i) end
+    else
+        local inHomeGroup     = IsInGroup()
+        local inInstanceGroup = IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+        if inHomeGroup or inInstanceGroup then
+            for i = 1, 4 do
+                if UnitExists("party"..i) then AddUnit("party"..i) end
+            end
+        end
+    end
+    
+    Cortio.RosterList = newRoster
+end
+
+function Cortio.Roster:RebuildWithRetry()
+    Cortio.Roster:Rebuild()
+    C_Timer.After(3, function()
+        local count = 0
+        for _ in pairs(Cortio.RosterList) do count = count + 1 end
+        if count <= 1 and (IsInGroup() or IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()) then
+            Cortio.Roster:Rebuild()
+            if Cortio.UI then Cortio.UI:UpdatePanel() end
+        end
+    end)
+end
+
+function Cortio.Roster:AutoRegisterByClass()
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) then
+            local fullName = Cortio.Taint:SafeUnitFullName(u)
+            if fullName then
+                local _, cls = UnitClass(u)
+                if cls and Cortio.Data.CLASS_INTERRUPT_CD[cls] and not Cortio.RosterList[fullName] then
+                    Cortio.RosterList[fullName] = {
+                        unit     = u,
+                        class    = cls,
+                        specIcon = specCache[fullName] or "0",
+                        cdEnd    = 0,
+                        cdTotal  = Cortio.Data.CLASS_INTERRUPT_CD[cls] or 15,
+                    }
+                end
+            end
+        end
+    end
+end
+
+Cortio.Roster.PartyWatchFrames = {}
+Cortio.Roster.PartyWatchActive = {}
+
+function Cortio.Roster:RegisterPartyWatchers()
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if not Cortio.Roster.PartyWatchFrames[i] then
+            Cortio.Roster.PartyWatchFrames[i] = CreateFrame("Frame")
+        end
+        local f = Cortio.Roster.PartyWatchFrames[i]
+        if UnitExists(unit) then
+            if not Cortio.Roster.PartyWatchActive[i] then
+                f:UnregisterAllEvents()
+                f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unit)
+                local slotIdx = i
+                f:SetScript("OnEvent", function(self, event, evUnit, castGUID, spellID)
+                    if not spellID then return end
+                    
+                    local cleanSpell = Cortio.Taint:ResolveNumber(spellID)
+                    if not cleanSpell or not Cortio.Data.INTERRUPT_SPELLID_SET[cleanSpell] then return end
+                    
+                    local slotUnit = "party" .. slotIdx
+                    local now = GetTime()
+                    
+                    for pName, pData in pairs(Cortio.RosterList) do
+                        if pData.unit == slotUnit then
+                            local classCD = Cortio.Data.CLASS_INTERRUPT_CD[pData.class] or 15
+                            Cortio.RosterList[pName].cdEnd   = now + classCD
+                            Cortio.RosterList[pName].cdTotal = classCD
+                            if Cortio.UI then Cortio.UI:UpdatePanel() end
+                            break
+                        end
+                    end
+                end)
+                Cortio.Roster.PartyWatchActive[i] = true
+            end
+        else
+            if Cortio.Roster.PartyWatchActive[i] then
+                f:UnregisterAllEvents()
+                Cortio.Roster.PartyWatchActive[i] = false
+            end
+        end
+    end
+end
+
+function Cortio.Roster:OnInspectReady(guid)
+    inspectPending = false
+    local unitsToCheck = {}
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            unitsToCheck[#unitsToCheck+1] = "raid"..i
+        end
+    else
+        for i = 1, 4 do
+            unitsToCheck[#unitsToCheck+1] = "party"..i
+        end
+    end
+    for _, unit in ipairs(unitsToCheck) do
+        if UnitExists(unit) then
+            local okGuid, uGuid = pcall(UnitGUID, unit)
+            if okGuid and uGuid and uGuid == guid then
+                local specId = GetInspectSpecialization(unit)
+                if specId and specId > 0 then
+                    local okName, name, realm = pcall(UnitName, unit)
+                    if okName and name then
+                        local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+                        local specIcon = "0"
+                        local si = select(4, GetSpecializationInfoByID(specId))
+                        if si then specIcon = tostring(si) end
+                        specCache[fullName] = specIcon
+                        Cortio.Roster:Rebuild()
+                        if Cortio.UI then Cortio.UI:UpdatePanel() end
+                    end
+                end
+                break
+            end
+        end
+    end
+    C_Timer.After(0.3, function() Cortio.Roster:ProcessInspectQueue() end)
+end
