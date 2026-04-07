@@ -6,7 +6,6 @@
 --------------------------------------------------------------
 
 local COMM_PREFIX = "CORTIO"
-C_ChatInfo.RegisterAddonMessagePrefix(COMM_PREFIX)
 
 -- { npcName, playerName, playerClass, specIcon, remoteCDEnd, remoteCDDuration, nameplateUnit, markId, markerSlot }
 local activeMarks = {}
@@ -69,10 +68,12 @@ end
 --------------------------------------------------------------
 local function EnsurePlayerInfo()
     if not playerName then
-        local n, r = securecallfunction(UnitName, "player")
+        -- Eliminamos securecallfunction porque TODO lo que retorna se contamina automáticamente con Taint.
+        -- Eso provocaba que "playerName" y "playerClass" envenenaran cada mensaje de la red (Fallo 11).
+        local n, r = UnitName("player")
         if n then
             playerName = (r and r ~= "") and (n .. "-" .. r) or n
-            local _, cls = securecallfunction(UnitClass, "player")
+            local _, cls = UnitClass("player")
             playerClass = cls
         end
     end
@@ -351,19 +352,17 @@ local function UpdateNameplate(unit)
         if mark.nameplateUnit == unit then
             isMatch = true
         elseif not mark.nameplateUnit and mark.unitToken then
-            -- GetNamePlateForUnit solo acepta tokens SIMPLES ("target", "nameplate4").
-            -- Tokens compuestos ("party1target") son rechazados A NIVEL C++ incluso dentro de pcall,
-            -- disparando el diálogo de "acción bloqueada" de Blizzard. Nunca los pasamos.
+            -- GetNamePlateForUnit YA NO acepta "target" en 12.0 (tira error "bad argument #1").
+            -- En su lugar, comparamos con UnitIsUnit explícitamente solo si es "target" (que sí es seguro comparar).
+            -- Tokens compuestos ("party1target") detonan la alarma de Addon bloqueado de Blizzard incluso en pcall, se purgan.
             if mark.unitToken == "target" and UnitExists("target") then
-                local targetNP = C_NamePlate.GetNamePlateForUnit("target")
-                local unitNP   = C_NamePlate.GetNamePlateForUnit(unit)
-                if targetNP and unitNP and targetNP == unitNP then
+                if SafeIsMatch("target", unit) then
                     isMatch = true
-                    mark.unitToken = nil  -- ancla fijada, descartamos el puntero dinámico
+                    mark.unitToken = nil  -- ancla fijada al nameplate, minimizamos futuras llamadas al motor
                 end
             else
-                -- Token compuesto remoto: imposible anclar en WoW 12.0.
-                -- Icono del compañero solo aparecerá en el panel lateral.
+                -- Token remoto compuesto: imposible anclar el icono de placa en WoW 12.0 instanciado sin target local.
+                -- El seguimiento de los compañeros seguirá mostrándose puramente a través del Panel Grande.
                 mark.unitToken = nil
             end
         end
@@ -542,13 +541,38 @@ local function RebuildRoster()
     AddUnit("player")
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do AddUnit("raid"..i) end
-    elseif IsInGroup() then
-        for i = 1, GetNumGroupMembers() do
-            if UnitExists("party"..i) then AddUnit("party"..i) end
+    else
+        -- TAINT-SAFE: IsInGroup() sin argumento = LE_PARTY_CATEGORY_HOME.
+        -- En M+ formado manualmente (premade) IsInGroup() = true.
+        -- En M+ via LFG/instancia, IsInGroup(LE_PARTY_CATEGORY_INSTANCE) = true.
+        -- Comprobamos ambos para cubrir todos los casos.
+        local inHomeGroup     = IsInGroup()
+        local inInstanceGroup = IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+        if inHomeGroup or inInstanceGroup then
+            -- party1..party4 funcionan siempre para grupos de 5; los tokens son iguales
+            -- tanto para HOME como para INSTANCE party en WoW 12.0.
+            for i = 1, 4 do
+                if UnitExists("party"..i) then AddUnit("party"..i) end
+            end
         end
     end
     
     CortioRoster = newRoster
+end
+
+-- Re‑intento de roster: al entrar al mundo los party members pueden tardar
+-- unos segundos en estar disponibles (especialmente tras una pantalla de carga larga).
+local function RebuildRosterWithRetry()
+    RebuildRoster()
+    -- Si sólo tenemos al jugador local pero deberíamos tener grupo, reintentamos.
+    C_Timer.After(3, function()
+        local count = 0
+        for _ in pairs(CortioRoster) do count = count + 1 end
+        if count <= 1 and (IsInGroup() or IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()) then
+            RebuildRoster()
+            UpdatePanel()
+        end
+    end)
 end
 
 local function UpdatePanel()
@@ -664,7 +688,23 @@ local function ClearPlayerMark(who)
 end
 
 --------------------------------------------------------------
--- KEYBINDING VARIABLES
+-- Frame dedicado para actualizar el macro del botón seguro.
+-- OnUpdate corre siempre en un hilo limpio, sin taint de eventos previos.
+-- Cuando necesitamos actualizar SetAttribute, encendemos la flag y este frame lo ejecuta.
+local secureBtnNeedsUpdate = false
+local secureBtnFrame = CreateFrame("Frame")
+secureBtnFrame:SetScript("OnUpdate", function(self, elapsed)
+    if secureBtnNeedsUpdate and not InCombatLockdown() then
+        secureBtnNeedsUpdate = false
+        Cortio_UpdateSecureBtnMacro()
+    end
+end)
+
+-- Encola una actualización del macro de forma segura (puede llamarse desde cualquier contexto)
+local function QueueSecureBtnUpdate()
+    secureBtnNeedsUpdate = true
+end
+
 --------------------------------------------------------------
 BINDING_HEADER_CORTIO_HEADER = "Cortio - Asignacion de Cortes"
 BINDING_NAME_CLICK_CortioMarkSABT_LeftButton = "Poner/Quitar Marca de Corte"
@@ -679,21 +719,29 @@ CortioMarkSABT:SetAttribute("macrotext", "/targetmarker 1")
 CortioMarkSABT:SetAttribute("markerSlot", 1)
 CortioMarkSABT:SetSize(1, 1)
 
--- Asigna un icono automaticamente del 8 (Calavera) hacia abajo segun el grupo
+-- Asigna un icono automaticamente sin colisionar con slots ya usados por otros
 local function AutoAssignMarkerSlot()
-    if not IsInGroup() then return 8 end
-    -- TAINT-SAFE: NO usamos UnitName("partyX") — en instancias devuelve secret strings
-    -- que contaminan el frame de ejecucion y bloquean el SetAttribute posterior.
-    -- En su lugar, buscamos el indice del jugador comparando con "player" (siempre seguro).
+    if not IsInGroup() and not IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and not IsInRaid() then return 8 end
     if IsInRaid() then
+        -- En raid podemos identificar nuestra posicion con UnitIsUnit (sin taint)
         for i = 1, GetNumGroupMembers() do
             if UnitIsUnit("raid"..i, "player") then
-                return math.max(1, 9 - i)  -- 1º=Skull(8), 2º=Cross(7), etc.
+                return math.max(1, 9 - i)  -- 1º=8, 2º=7, etc.
             end
         end
     end
-    -- En party el jugador no aparece como partyX: devolver 8 (Skull) por defecto.
-    -- El usuario puede cambiar con /ct slot N.
+    -- PARTY (M+): asignar el slot libre más alto que no use ningún otro jugador.
+    -- Leemos activeMarks para saber qué slots ya han sido reclamados.
+    -- Si nadie ha marcado aún, tomamos el 8 (Calavera) por defecto.
+    local usedSlots = {}
+    for _, mark in ipairs(activeMarks) do
+        if mark.playerName ~= playerName and mark.markerSlot and mark.markerSlot > 0 then
+            usedSlots[mark.markerSlot] = true
+        end
+    end
+    for slot = 8, 1, -1 do
+        if not usedSlots[slot] then return slot end
+    end
     return 8
 end
 
@@ -708,53 +756,81 @@ end
 function Cortio_UpdateSecureBtnMacro()
     if InCombatLockdown() then return end
     local slot = GetPlayerMarkerSlotSafe()
-    CortioMarkSABT:SetAttribute("macrotext", "/targetmarker " .. tostring(slot))
+    local lines = {"/targetmarker " .. tostring(slot)}
+    if CortioDB and CortioDB.announce then
+        local sName = playerName and ShortName(playerName) or "?"
+        if #sName > 12 then sName = sName:sub(1, 12) end
+        local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
+        -- SIN %t: el nombre del objetivo NPC es un "secret value" en instancias M+.
+        -- Usarlo en el macro contamina el chat frame y causa crash en UpdateHeader.
+        local txt = chatIcon .. " [Cortio] " .. sName .. " corta!"
+        table.insert(lines, "/i [group:instance] " .. txt)
+        table.insert(lines, "/p [nogroup:instance,group] " .. txt)
+    end
+    CortioMarkSABT:SetAttribute("macrotext", table.concat(lines, "\n"))
     CortioMarkSABT:SetAttribute("markerSlot", slot)
 end
 
 --------------------------------------------------------------
 -- ACCIÓN POST-MARCA: Sync AddonMessage y UI
 --------------------------------------------------------------
+
+-- Búfer de Red (Bypass Hardware Event Taint / Fallo 11)
+-- Blizzard (v10+) ensucia con Taint cualquier C_ChatInfo que derive de un hardware click
+-- o de un C_Timer anidado en él. El frame OnUpdate es 100% puro e independiente.
+local netQueue = {}
+local netFrame = CreateFrame("Frame")
+netFrame:SetScript("OnUpdate", function(self, elapsed)
+    if #netQueue > 0 then
+        local job = table.remove(netQueue, 1)
+        local result = C_ChatInfo.SendAddonMessage(job.prefix, job.msg, job.channel)
+        if result and result ~= 0 then 
+            LogError(job.tag, "AddonMsg fallo ("..job.channel.."): " .. tostring(result)) 
+        end
+    end
+end)
+
 local function HandlePostClick(self, button, down)
     -- Evitamos ejecuciones duplicadas de teclados
     if not down then return end
 
-    -- Retraso de 50ms para que GetRaidTargetIndex(target) reciba la info
+    -- Retraso de 50ms para que el motor procese /targetmarker antes de que leamos el estado.
+    -- NOTA: el announce en chat YA fue enviado por el macrotext del botón seguro (corre antes
+    -- de PostClick). Aquí solo sincronizamos el addon (AddonMessage) y la UI local.
     C_Timer.After(0.05, function()
         EnsurePlayerInfo()
         if not playerName then return end
 
-        local sourceUnit = "target"
-        
-        if not UnitExists(sourceUnit) then
-            ClearPlayerMark(playerName)
-            UpdatePanel()
-            local ch
-            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
-            elseif IsInRaid() then ch = "RAID"
-            elseif IsInGroup() then ch = "PARTY"
-            end
-            if ch then
-                local msg = "UNMARK:"..(playerClass or "UNKNOWN")..":0:0:0:0"
-                local result = C_ChatInfo.SendAddonMessage(COMM_PREFIX, msg, ch)
-            end
-            print("|cFF00FFFF[Cortio]|r Corte retirado (sin objetivo).")
-            return
+        local ch
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
+        elseif IsInRaid() then ch = "RAID"
+        elseif IsInGroup() then ch = "PARTY"
         end
 
-        local slot = CortioMarkSABT:GetAttribute("markerSlot") or GetPlayerMarkerSlotSafe()
-
-        local targetName = UnitName(sourceUnit)
-        if not targetName then return end
-
+        local slot = GetPlayerMarkerSlotSafe()
         local specIndex = GetSpecialization()
         local specIcon = "0"
         if specIndex then
             local si = select(4, GetSpecializationInfo(specIndex))
             if si then specIcon = tostring(si) end
         end
+        local markId = math.floor(GetTime() * 1000) % 100000
 
-        local markId = math.random(10000, 99999)
+        -- Aislamos la creación de strings del entorno antes de interactuar con el motor (UnitName)
+        local msgMark = "MARK:"..(playerClass or "UNKNOWN")..":"..(specIcon or "0")..":"..(markId or "0")..":"..(slot or "0")..":0"
+        local msgUnmark = "UNMARK:"..(playerClass or "UNKNOWN")..":0:0:0:0"
+
+        local sourceUnit = "target"
+        
+        if not UnitExists(sourceUnit) then
+            ClearPlayerMark(playerName)
+            UpdatePanel()
+            if ch then
+                table.insert(netQueue, {prefix=COMM_PREFIX, msg=msgUnmark, channel=ch, tag="Send"})
+            end
+            print("|cFF00FFFF[Cortio]|r Corte retirado (sin objetivo).")
+            return
+        end
 
         ClearPlayerMark(playerName)
 
@@ -769,40 +845,24 @@ local function HandlePostClick(self, button, down)
             markId = markId,
             markerSlot = slot
         })
-        
-        local iconStr = GetRaidIconString(slot, 14)
-        print("|cFF00FFFF[Cortio]|r Corte asignado" .. (slot > 0 and (" " .. iconStr) or "") .. " |cFFFFDD00" .. tostring(targetName) .. "|r")
-        
-        if CortioDB and CortioDB.announce then
-            local ch
-            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
-            elseif IsInRaid() then ch = "RAID"
-            elseif IsInGroup() then ch = "PARTY"
-            end
-            if ch and slot > 0 then
-                -- {rt1}=Estrella {rt2}=Circulo {rt3}=Diamante {rt4}=Triangulo
-                -- {rt5}=Luna {rt6}=Cuadrado {rt7}=Cruz {rt8}=Calavera
-                local chatIcon = "{rt" .. slot .. "}"
-                SendChatMessage("[Cortio] " .. chatIcon .. " Corte a %t >> " .. ShortName(playerName), ch)
-            end
+
+        if ch then
+            table.insert(netQueue, {prefix=COMM_PREFIX, msg=msgMark, channel=ch, tag="Send"})
         end
 
+        -- ¡CRÍTICO! Validamos TODA la UI y C++ Frame APIs ANTES de tocar UnitName()
         UpdatePanel()
         UpdateAllNameplates()
 
-        local channel
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then channel = "INSTANCE_CHAT"
-        elseif IsInRaid() then channel = "RAID"
-        elseif IsInGroup() then channel = "PARTY"
-        end
-
-        if channel then
-            local msg = "MARK:"..(playerClass or "UNKNOWN")..":"..(specIcon or "0")..":"..(markId or "0")..":"..(slot or "0")..":0"
-            local result = C_ChatInfo.SendAddonMessage(COMM_PREFIX, msg, channel)
-            if result and Enum and Enum.SendAddonMessageResult and result ~= Enum.SendAddonMessageResult.Success then
-                LogError("Send", "AddonMsg fallo: " .. tostring(result))
-            end
-        end
+        -- *************** ZONA DE PELIGRO DE TAINT ****************
+        -- CUALQUIER COSA DEBAJO DE ESTA LÍNEA ENVENENARÁ EL HILO EN 12.0
+        local targetName = UnitName(sourceUnit)
+        if not targetName then return end
+        
+        local iconStr = GetRaidIconString(slot, 14)
+        -- El mensaje de chat ya lo enviamos desde el macro del botón seguro (sin taint).
+        -- Aquí solo mostramos confirmación LOCAL en el chat del jugador.
+        print("|cFF00FFFF[Cortio]|r Corte asignado" .. (slot > 0 and (" " .. iconStr) or "") .. " |cFFFFDD00" .. tostring(targetName) .. "|r")
     end)
 end
 CortioMarkSABT:HookScript("PostClick", HandlePostClick)
@@ -899,16 +959,35 @@ eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         EnsurePlayerInfo()
+        
+        -- Limpiar marks activos al entrar al mundo.
+        activeMarks = {}
+        for unit, _ in pairs(activeNameplates) do
+            ReleaseNameplateFrame(unit)
+        end
+        
+        -- Registrar prefijo addon.
+        local function SafeRegisterPrefix()
+            if not C_ChatInfo.RegisterAddonMessagePrefix(COMM_PREFIX) then
+                C_Timer.After(2, SafeRegisterPrefix)
+            end
+        end
+        SafeRegisterPrefix()
+        
         if not CortioDB then CortioDB = {} end
         if not CortioDB.errors then CortioDB.errors = {} end
-        -- C_Timer.After: frame limpio para SetAttribute (evita blocked-action
-        -- si PLAYER_ENTERING_WORLD desencadena taint antes de la llamada).
-        C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
-        RebuildRoster()
+        
+        -- TAINT-SAFE: RebuildRoster toca UnitName/UnitIsUnit y mancha el hilo.
+        -- Cortio_UpdateSecureBtnMacro llama SetAttribute que necesita hilo LIMPIO.
+        -- Solución: RebuildRoster PRIMERO, luego SetAttribute con delay 2s en frame dedicado.
+        -- El frame secureBtnUpdateFrame nunca registra eventos que puedan taintarlo.
+        RebuildRosterWithRetry()
+        -- Encolar actualización del macro via OnUpdate: garantiza hilo limpio.
+        QueueSecureBtnUpdate()
         
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- C_Timer.After(0): frame limpio, sin taint del evento anterior
-        C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
+        -- Encolar actualización del macro via OnUpdate (hilo limpio, fuera de combate)
+        QueueSecureBtnUpdate()
         
     elseif event == "NAME_PLATE_UNIT_ADDED" or event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
         UpdateNameplate(arg1)
@@ -921,29 +1000,47 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
-        RebuildRoster()   -- puede taintar el frame (UnitName de party en instancias)
+        RebuildRoster()
         UpdatePanel()
         if not InCombatLockdown() then
-            -- C_Timer.After(0): SetAttribute se ejecuta en frame LIMPIO, separado del taint
-            C_Timer.After(0, Cortio_UpdateSecureBtnMacro)
+            QueueSecureBtnUpdate()
         end
         
     elseif event == "INSPECT_READY" then
         inspectPending = false
-        for _, unit in pairs({"party1", "party2", "party3", "party4"}) do
-            if UnitExists(unit) and UnitGUID(unit) == arg1 then
-                local specId = GetInspectSpecialization(unit)
-                if specId and specId > 0 then
-                    local name, realm = UnitName(unit)
-                    local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
-                    local specIcon = "0"
-                    local si = select(4, GetSpecializationInfoByID(specId))
-                    if si then specIcon = tostring(si) end
-                    specCache[fullName] = specIcon
-                    RebuildRoster()
-                    UpdatePanel()
+        -- Construir lista de unidades a revisar (party en dungeon, raid en raid)
+        local unitsToCheck = {}
+        if IsInRaid() then
+            for i = 1, GetNumGroupMembers() do
+                unitsToCheck[#unitsToCheck+1] = "raid"..i
+            end
+        else
+            for i = 1, 4 do
+                unitsToCheck[#unitsToCheck+1] = "party"..i
+            end
+        end
+        for _, unit in ipairs(unitsToCheck) do
+            if UnitExists(unit) then
+                -- UnitGUID en instancias puede devolver un "secret value" que explota en comparaciones
+                -- directas (==). Envolvemos en pcall para blindar contra el crash de taint.
+                local okGuid, guid = pcall(UnitGUID, unit)
+                if okGuid and guid and guid == arg1 then
+                    local specId = GetInspectSpecialization(unit)
+                    if specId and specId > 0 then
+                        -- UnitName en instancias también puede ser secret; pcall defensivo
+                        local okName, name, realm = pcall(UnitName, unit)
+                        if okName and name then
+                            local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
+                            local specIcon = "0"
+                            local si = select(4, GetSpecializationInfoByID(specId))
+                            if si then specIcon = tostring(si) end
+                            specCache[fullName] = specIcon
+                            RebuildRoster()
+                            UpdatePanel()
+                        end
+                    end
+                    break
                 end
-                break
             end
         end
         C_Timer.After(0.3, ProcessInspectQueue)
@@ -952,25 +1049,28 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         -- arg1 = token de la unidad que murio (puede ser "nameplateN", "target", etc.)
         -- Compara con UnitIsUnit para detectar si el NPC marcado acabo de morir.
         local cleared = false
+        
+        -- Bypass Secret String: si arg1 es un nameplate en mazmorras, comparar con "==" destruye la ejecución.
+        local ok, isTargetStr = pcall(function() return arg1 == "target" end)
+        isTargetStr = ok and isTargetStr
+        
         for i = #activeMarks, 1, -1 do
             local mark = activeMarks[i]
             local shouldClear = false
 
             if mark.nameplateUnit then
-                -- Caso 1: comparación directa (rápida, cubre el 99% de casos en mazmorra)
-                if mark.nameplateUnit == arg1 then
-                    shouldClear = true
-                -- Caso 2: SafeIsMatch fallback: boss1 vs nameplate4 apuntan al mismo unit
-                elseif SafeIsMatch(mark.nameplateUnit, arg1) then
+                -- Omitimos la comparación "==" directa porque mark.nameplateUnit y arg1 pueden tener Taints mezclados
+                -- Usamos exclusivamente SafeIsMatch que envuelve la lectura de C++ en pcalls blindados
+                if SafeIsMatch(mark.nameplateUnit, arg1) then
                     shouldClear = true
                 end
             end
 
-            -- Caso 3: la mark del jugador local no tiene nameplateUnit aun (recién puesta)
-            -- y arg1 == "target" significa que el objetivo actual acaba de morir
-            if not shouldClear and mark.playerName == playerName
-               and not mark.nameplateUnit and arg1 == "target" then
-                shouldClear = true
+            -- Si es nuestra marca, todavía no tenía ancla 3D, y se muere nuestro "target" explícito
+            if not shouldClear and mark.playerName == playerName and not mark.nameplateUnit then
+                if isTargetStr or SafeIsMatch(arg1, "target") then
+                    shouldClear = true
+                end
             end
 
             if shouldClear then
@@ -982,8 +1082,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                     elseif IsInGroup() then ch = "PARTY"
                     end
                     if ch then
-                        pcall(C_ChatInfo.SendAddonMessage, COMM_PREFIX,
-                            "UNMARK:" .. (playerClass or "UNKNOWN") .. ":0:0", ch)
+                        local msg = "UNMARK:" .. (playerClass or "UNKNOWN") .. ":0:0"
+                        table.insert(netQueue, {prefix=COMM_PREFIX, msg=msg, channel=ch, tag="Send"})
                     end
                 end
                 table.remove(activeMarks, i)
@@ -1046,17 +1146,31 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                 local markerSlot = markerSlotStr and tonumber(markerSlotStr) or 0
                 if action == "MARK" then
                     ClearPlayerMark(rPlayer)
+
+                    -- Calcular nuestro slot ANTES de registrar el mark del otro
+                    -- (para saber si hay colisión después)
+                    local ourSlotBefore = GetPlayerMarkerSlotSafe()
+
+                    -- Buscar el token de la unidad del remoto (party1target, etc.)
                     local uToken = nil
-                    if GetNumGroupMembers() > 0 then
-                        local prefix = IsInRaid() and "raid" or "party"
-                        for i = 1, GetNumGroupMembers() do
-                            local u = prefix .. i
+                    for i = 1, 4 do
+                        local u = "party" .. i
+                        if UnitExists(u) then
+                            if CortioRoster[rPlayer] and CortioRoster[rPlayer].unit == u then
+                                uToken = u .. "target"
+                                break
+                            end
+                        end
+                    end
+                    if not uToken then
+                        for i = 1, 4 do
+                            local u = "party" .. i
                             if UnitExists(u) then
-                                local n, r = UnitName(u)
-                                if n then
+                                local ok, n, r = pcall(UnitName, u)
+                                if ok and n then
                                     local fN = (r and r ~= "") and (n.."-"..r) or n
                                     local sN = strsplit("-", rPlayer)
-                                    if fN == rPlayer or n == sN then
+                                    if fN == rPlayer or n == sN or strsplit("-",fN) == sN then
                                         uToken = u .. "target"
                                         break
                                     end
@@ -1064,7 +1178,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                             end
                         end
                     end
-                    
+
                     local newMark = {
                         playerName = rPlayer,
                         playerClass = cls,
@@ -1076,6 +1190,17 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                         markerSlot = markerSlot
                     }
                     table.insert(activeMarks, newMark)
+
+                    -- Detección de colisión: tras insertar el mark del otro,
+                    -- si AutoAssignMarkerSlot ahora devuelve un slot distinto al que
+                    -- teníamos antes, significa que nos pisó el slot → reasignamos.
+                    -- Solo aplica en modo automático (CortioDB.markerSlot == 0 o nil).
+                    local ourSlotFixed = not CortioDB or (CortioDB.markerSlot or 0) == 0
+                    if ourSlotFixed and markerSlot > 0 and markerSlot == ourSlotBefore then
+                        -- El otro tomó exactamente nuestro slot auto-asignado → pedir reasignación
+                        -- AutoAssignMarkerSlot ahora excluirá el slot del otro y devolverá el siguiente
+                        QueueSecureBtnUpdate()
+                    end
                 elseif action == "UNMARK" then
                     ClearPlayerMark(rPlayer)
                 end
@@ -1096,50 +1221,37 @@ local UpdateKickCooldown  -- forward declaration
 local lastInterruptBroadcastTime = 0
 
 local castDetectFrame = CreateFrame("Frame")
+-- TAINT-SAFE: Solo usamos UNIT_SPELLCAST_SUCCEEDED.
+-- COMBAT_LOG_EVENT_UNFILTERED devuelve secret values en instancias M+ (sourceName de NPCs,
+-- spellIds de boss abilities, etc.) que contaminan el hilo y hacen fallar SendAddonMessage.
 castDetectFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-castDetectFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 castDetectFrame:SetScript("OnEvent", function(self, event, ...)
     local isInterrupt = false
     local cdDuration = 15
-    
+
+    -- UNIT_SPELLCAST_SUCCEEDED dispara para "player", "party1".."party4", "raid1"..etc.
+    -- spellID aqui es siempre un numero limpio (es un spell de jugador, nunca secret).
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, castGUID, spellID = ...
-        if unit == "player" and INTERRUPT_SPELLID_SET[spellID] and playerClass then
+        if not INTERRUPT_SPELLID_SET[spellID] then return end  -- salida rapida
+
+        if unit == "player" and playerClass then
+            -- *** Jugador LOCAL: broadcast CD al grupo ***
             isInterrupt = true
-            -- NOTA API: C_Spell.GetSpellCooldown NO devuelve valores actualizados
-            -- inmediatamente en UNIT_SPELLCAST_SUCCEEDED (ver warcraft.wiki.gg).
-            -- Usamos CLASS_INTERRUPT_CD como fallback; SPELL_INTERRUPT lee el CD real.
             cdDuration = CLASS_INTERRUPT_CD[playerClass] or 15
-        end
-    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        local timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellId, spellName = CombatLogGetCurrentEventInfo()
-        if subevent == "SPELL_INTERRUPT" and sourceName then
-            local sName = strsplit("-", sourceName)
-            local pName = playerName and strsplit("-", playerName) or ""
-            if sName == pName and playerClass then
-                -- Jugador LOCAL: leer CD real incluyendo talentos
-                isInterrupt = true
-                local interruptSpellID = myInterruptSpellID or CLASS_INTERRUPT_SPELLID[playerClass]
-                local realCD = nil
-                if interruptSpellID and C_Spell and C_Spell.GetSpellCooldown then
-                    local cdInfo = C_Spell.GetSpellCooldown(interruptSpellID)
-                    if cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
-                        realCD = cdInfo.duration
-                    end
-                end
-                cdDuration = realCD or CLASS_INTERRUPT_CD[playerClass] or 15
-            else
-                -- Jugador REMOTO (con o sin Cortio): actualizar su CD localmente desde el log.
-                -- SPELL_INTERRUPT es visible para TODOS los clientes del grupo,
-                -- así que cada uno lo procesa independientemente sin necesidad de addon.
-                local rPlayer = FindRosterPlayer(sourceName)
-                if rPlayer and CortioRoster[rPlayer] then
-                    local rClass = CortioRoster[rPlayer].class
-                    local rCD = CLASS_INTERRUPT_CD[rClass] or 15
-                    local now = GetTime()
-                    CortioRoster[rPlayer].cdEnd   = now + rCD
-                    CortioRoster[rPlayer].cdTotal  = rCD
+
+        elseif unit ~= "player" then
+            -- *** Jugador REMOTO: buscar en roster por unit token (sin UnitName) ***
+            -- CortioRoster guarda pData.unit = "party1" etc. desde RebuildRoster.
+            -- Comparar unit tokens es 100% seguro, no genera taint.
+            local now = GetTime()
+            for pName, pData in pairs(CortioRoster) do
+                if pData.unit == unit then
+                    local rCD = CLASS_INTERRUPT_CD[pData.class] or 15
+                    CortioRoster[pName].cdEnd   = now + rCD
+                    CortioRoster[pName].cdTotal  = rCD
                     UpdatePanel()
+                    break
                 end
             end
         end
@@ -1168,7 +1280,8 @@ castDetectFrame:SetScript("OnEvent", function(self, event, ...)
         end
         
         if channel then
-            C_ChatInfo.SendAddonMessage(COMM_PREFIX, "CD:" .. cdDuration, channel)
+            local msg = "CD:" .. cdDuration
+            table.insert(netQueue, {prefix=COMM_PREFIX, msg=msg, channel=channel, tag="CD"})
         end
     end
 end)
