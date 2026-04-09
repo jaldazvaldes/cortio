@@ -234,14 +234,20 @@ local lastInterruptBroadcastTime = 0
 local castDetectFrame = CreateFrame("Frame")
 castDetectFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
 castDetectFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
-    if not Cortio.Data.INTERRUPT_SPELLID_SET[spellID] then return end
+    if not spellID then return end
+    local cleanSpell = Cortio.Taint:ResolveNumber(spellID)
+    if not cleanSpell then return end
+    
+    local okSpell, spellName = pcall(C_Spell.GetSpellName, cleanSpell)
+    if not okSpell or not spellName then return end
+    if not Cortio.Data.INTERRUPT_NAME_TO_CD[spellName] then return end
     if not Cortio.PlayerClass then return end
 
     local now = GetTime()
     if now - lastInterruptBroadcastTime < 1 then return end
     lastInterruptBroadcastTime = now
 
-    local cdDuration = Cortio.Data.CLASS_INTERRUPT_CD[Cortio.PlayerClass] or 15
+    local cdDuration = Cortio.Data:GetClassInterruptCD(Cortio.PlayerClass)
     local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
     if ok and info and info.duration then
         local cleanDuration = Cortio.Taint:ResolveNumber(info.duration)
@@ -259,6 +265,45 @@ castDetectFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spell
     Cortio.UI:UpdateKickCooldown()
 
     Cortio.Net:SendGroupMessage("CD:"..cdDuration, "CD")
+end)
+
+local combatLogFrame = CreateFrame("Frame")
+combatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+combatLogFrame:SetScript("OnEvent", function(self, event)
+    local _, subevent, _, sourceGUID, sourceName, _, _, _, _, _, _, spellId = CombatLogGetCurrentEventInfo()
+    if not sourceName or not subevent or not spellId then return end
+    
+    local interruptData = Cortio.Data.ALL_INTERRUPTS[spellId]
+    if interruptData then
+        if subevent == "SPELL_CAST_SUCCESS" or subevent == "SPELL_INTERRUPT" or subevent == "SPELL_MISSED" then
+            local shortName = Cortio.Data:ShortName(sourceName)
+            local matchedPlayer = nil
+            
+            for pName, pData in pairs(Cortio.RosterList) do
+                if Cortio.Data:ShortName(pName) == shortName then
+                    matchedPlayer = pName
+                    break
+                end
+            end
+            
+            if matchedPlayer then
+                local now = GetTime()
+                local cdTotal = Cortio.RosterList[matchedPlayer].cdTotal or interruptData.cd
+                
+                if subevent == "SPELL_CAST_SUCCESS" then
+                    Cortio.RosterList[matchedPlayer].cdEnd = now + cdTotal
+                    Cortio.RosterList[matchedPlayer].lastResult = "USED"
+                    if Cortio.UI then Cortio.UI:UpdatePanel() end
+                elseif subevent == "SPELL_INTERRUPT" then
+                    Cortio.RosterList[matchedPlayer].lastResult = "SUCCESS"
+                    if Cortio.UI then Cortio.UI:UpdatePanel() end
+                elseif subevent == "SPELL_MISSED" then
+                    Cortio.RosterList[matchedPlayer].lastResult = "MISSED"
+                    if Cortio.UI then Cortio.UI:UpdatePanel() end
+                end
+            end
+        end
+    end
 end)
 
 local ticker = 0

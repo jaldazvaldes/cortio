@@ -126,7 +126,13 @@ function Cortio.UI:UpdatePanel()
             local ratio = sLeft / data.cdTotal
             local cdCol = "FFFF66"
             if ratio > 0.6 then cdCol = "FF4444" elseif ratio > 0.3 then cdCol = "FFAA00" end
-            cdText = string.format("|cff%s%.1fs|r", cdCol, sLeft)
+            
+            local resultIcon = ""
+            if data.lastResult == "SUCCESS" then resultIcon = " |cFF55FF55[✓]|r"
+            elseif data.lastResult == "MISSED" then resultIcon = " |cFFFF5555[X]|r"
+            elseif data.lastResult == "USED" then resultIcon = " |cFFFFFF55[-]|r" end
+            
+            cdText = string.format("|cff%s%.1fs|r%s", cdCol, sLeft, resultIcon)
         else
             cdText = "|cff44FF88Ready|r"
         end

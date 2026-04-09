@@ -96,7 +96,7 @@ function Cortio.Roster:Rebuild()
                 class = class,
                 specIcon = specIcon,
                 cdEnd = old and old.cdEnd or 0,
-                cdTotal = old and old.cdTotal or (Cortio.Data.CLASS_INTERRUPT_CD[class] or 15)
+                cdTotal = old and old.cdTotal or Cortio.Data:GetClassInterruptCD(class)
             }
             if UnitIsUnit(unit, "player") then
                 Cortio.PlayerName = fullName
@@ -108,7 +108,7 @@ function Cortio.Roster:Rebuild()
         Cortio.RosterList = {
             [Cortio.PlayerName or "Jugador"] = { unit="player", class=Cortio.PlayerClass or "HUNTER", specIcon="132111", cdEnd=0, cdTotal=15 },
             ["Aliado1"] = { unit="party1", class="WARRIOR", specIcon="132344", cdEnd=GetTime()+5, cdTotal=15 },
-            ["Aliado2"] = { unit="party2", class="MAGE", specIcon="135856", cdEnd=0, cdTotal=24 },
+            ["Aliado2"] = { unit="party2", class="MAGE", specIcon="135856", cdEnd=0, cdTotal=20 },
         }
         return
     end
@@ -148,13 +148,13 @@ function Cortio.Roster:AutoRegisterByClass()
             local fullName = Cortio.Taint:SafeUnitFullName(u)
             if fullName then
                 local _, cls = UnitClass(u)
-                if cls and Cortio.Data.CLASS_INTERRUPT_CD[cls] and not Cortio.RosterList[fullName] then
+                if cls and Cortio.Data.CLASS_INTERRUPT_SPELLID[cls] and not Cortio.RosterList[fullName] then
                     Cortio.RosterList[fullName] = {
                         unit     = u,
                         class    = cls,
                         specIcon = specCache[fullName] or "0",
                         cdEnd    = 0,
-                        cdTotal  = Cortio.Data.CLASS_INTERRUPT_CD[cls] or 15,
+                        cdTotal  = Cortio.Data:GetClassInterruptCD(cls),
                     }
                 end
             end
@@ -162,49 +162,8 @@ function Cortio.Roster:AutoRegisterByClass()
     end
 end
 
-Cortio.Roster.PartyWatchFrames = {}
-Cortio.Roster.PartyWatchActive = {}
-
 function Cortio.Roster:RegisterPartyWatchers()
-    for i = 1, 4 do
-        local unit = "party" .. i
-        if not Cortio.Roster.PartyWatchFrames[i] then
-            Cortio.Roster.PartyWatchFrames[i] = CreateFrame("Frame")
-        end
-        local f = Cortio.Roster.PartyWatchFrames[i]
-        if UnitExists(unit) then
-            if not Cortio.Roster.PartyWatchActive[i] then
-                f:UnregisterAllEvents()
-                f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unit)
-                local slotIdx = i
-                f:SetScript("OnEvent", function(self, event, evUnit, castGUID, spellID)
-                    if not spellID then return end
-                    
-                    local cleanSpell = Cortio.Taint:ResolveNumber(spellID)
-                    if not cleanSpell or not Cortio.Data.INTERRUPT_SPELLID_SET[cleanSpell] then return end
-                    
-                    local slotUnit = "party" .. slotIdx
-                    local now = GetTime()
-                    
-                    for pName, pData in pairs(Cortio.RosterList) do
-                        if pData.unit == slotUnit then
-                            local classCD = Cortio.Data.CLASS_INTERRUPT_CD[pData.class] or 15
-                            Cortio.RosterList[pName].cdEnd   = now + classCD
-                            Cortio.RosterList[pName].cdTotal = classCD
-                            if Cortio.UI then Cortio.UI:UpdatePanel() end
-                            break
-                        end
-                    end
-                end)
-                Cortio.Roster.PartyWatchActive[i] = true
-            end
-        else
-            if Cortio.Roster.PartyWatchActive[i] then
-                f:UnregisterAllEvents()
-                Cortio.Roster.PartyWatchActive[i] = false
-            end
-        end
-    end
+    -- Vaciado: Ahora el Combat Log (en Cortio.lua) hace todo este trabajo sin taint.
 end
 
 function Cortio.Roster:OnInspectReady(guid)
