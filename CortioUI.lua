@@ -512,16 +512,49 @@ SlashCmdList["CORTIO"] = function(msg)
     elseif cmd == "debug" then
         print("|cFF00FFFF[Cortio]|r === DEBUG ===")
         print("  playerName = " .. tostring(Cortio.PlayerName))
+        
+        -- Prefix status
+        local prefixOk = C_ChatInfo.IsAddonMessagePrefixRegistered and
+            C_ChatInfo.IsAddonMessagePrefixRegistered(Cortio.Data.COMM_PREFIX)
+        print("  prefix '" .. Cortio.Data.COMM_PREFIX .. "' registered = " .. tostring(prefixOk))
+        
+        -- Network stats
+        local stats = Cortio.Net.Stats
+        print(string.format("  net: sent=%d recv=%d | this min: sent=%d recv=%d",
+            stats.sent, stats.received, stats.sentThisMinute, stats.receivedThisMinute))
+        print("  lastSendResult = " .. tostring(stats.lastResult)
+            .. " (" .. string.format("%.1fs ago", GetTime() - (stats.lastResultTime or 0)) .. ")")
+        print("  queue length = " .. #Cortio.Net.Queue)
+        
+        -- Panel ticker status
+        print("  panelTicker active = " .. tostring(Cortio.PanelTicker ~= nil))
+        
+        -- Active marks
         print("  activeMarks (" .. #Cortio.Marks.Active .. "):")
         for i, m in ipairs(Cortio.Marks.Active) do
             print(string.format("    [%d] player=%s slot=%s class=%s",
                 i, tostring(m.playerName), tostring(m.markerSlot), tostring(m.playerClass)))
         end
+        
+        -- Roster
         print("  CortioRoster:")
         for k, v in pairs(Cortio.RosterList) do
-            print(string.format("    [%s] unit=%s class=%s cdEnd=%.1f",
-                tostring(k), tostring(v.unit), tostring(v.class), (v.cdEnd or 0) - GetTime()))
+            print(string.format("    [%s] unit=%s class=%s spec=%s cdEnd=%.1f",
+                tostring(k), tostring(v.unit), tostring(v.class),
+                tostring(v.specIcon), (v.cdEnd or 0) - GetTime()))
         end
+        
+        -- Recent messages
+        if #stats.recentMessages > 0 then
+            print("  Last " .. #stats.recentMessages .. " received messages:")
+            for _, msg in ipairs(stats.recentMessages) do
+                print(string.format("    [%s] from=%s: %s",
+                    msg.time, tostring(msg.sender), tostring(msg.msg)))
+            end
+        else
+            print("  No messages received yet.")
+        end
+        
         print("|cFF00FFFF[Cortio]|r === FIN ===")
     else
         print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct errors | /ct clear")

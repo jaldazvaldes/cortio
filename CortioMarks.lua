@@ -110,6 +110,11 @@ function Cortio.Marks:HandlePostClick(self, button, down)
     C_Timer.After(0.05, function()
         Cortio.Roster:EnsurePlayerInfo()
         if not Cortio.PlayerName then return end
+        
+        -- Warn about raid marker permissions
+        if IsInRaid() and not UnitIsGroupLeader("player") and not UnitIsGroupAssistant("player") then
+            print("|cFF00FFFF[Cortio]|r |cFFFF9900Aviso: en raid necesitas ser líder/asistente para que el raid marker sea visible.|r")
+        end
 
         local ch
         if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
@@ -131,8 +136,8 @@ function Cortio.Marks:HandlePostClick(self, button, down)
         local okT, markId = pcall(math.floor, rawId)
         if not okT then markId = 0 end
 
-        local msgMark = "MARK:"..(Cortio.PlayerClass or "UNKNOWN")..":"..(specIcon)..":"..(markId or "0")..":"..(slot or "0")..":0"
-        local msgUnmark = "UNMARK:"..(Cortio.PlayerClass or "UNKNOWN")..":0:0:0:0"
+        local msgMark = "V1|MARK|"..(Cortio.PlayerClass or "UNKNOWN").."|"..(specIcon).."|"..(markId or "0").."|"..(slot or "0").."|"..("0")
+        local msgUnmark = "V1|UNMARK"
 
         local sourceUnit = "target"
         
@@ -197,7 +202,7 @@ function Cortio.Marks:BroadcastCurrentMark()
                     cleanSI = c and tostring(c) or "0"
                 end
             end
-            local msg = "MARK:"..Cortio.PlayerClass..":"..cleanSI..":"..(m.markId or "0")..":"..(m.markerSlot or "0")..":0"
+            local msg = "V1|MARK|"..Cortio.PlayerClass.."|"..cleanSI.."|"..(m.markId or "0").."|"..(m.markerSlot or "0").."|0"
             table.insert(Cortio.Net.Queue, {prefix=Cortio.Data.COMM_PREFIX, msg=msg, channel=ch, tag="BroadcastMark"})
             return
         end

@@ -3,19 +3,24 @@ BINDING_NAME_CLICK_CortioMarkSABT_LeftButton = "Poner/Quitar Marca de Corte"
 
 Cortio = Cortio or {}
 
-local function SafeRegisterPrefix()
-    if not C_ChatInfo.RegisterAddonMessagePrefix(Cortio.Data.COMM_PREFIX) then
-        C_Timer.After(2, SafeRegisterPrefix)
+-- Prefix registration moved to PLAYER_ENTERING_WORLD for reliability
+
+-- Taint debug: detect ADDON_ACTION_BLOCKED
+local blockedFrame = CreateFrame("Frame")
+blockedFrame:RegisterEvent("ADDON_ACTION_BLOCKED")
+blockedFrame:SetScript("OnEvent", function(_, _, addon, func)
+    if addon == "Cortio" then
+        Cortio.Data:LogError("TAINT", "Action blocked: " .. tostring(func))
+        print("|cFF00FFFF[Cortio]|r |cFFFF0000TAINT: Action blocked:|r " .. tostring(func))
     end
-end
-SafeRegisterPrefix()
+end)
 
 local function FindRosterPlayer(sender)
     if Cortio.RosterList[sender] then return sender end
-    local simpleName = strsplit("-", sender)
+    local ambig = Ambiguate(sender, "short")
+    if Cortio.RosterList[ambig] then return ambig end
     for k in pairs(Cortio.RosterList) do
-        local kb = strsplit("-", k)
-        if kb == simpleName then return k end
+        if Ambiguate(k, "short") == ambig then return k end
     end
     return nil
 end
@@ -31,10 +36,21 @@ eventFrame:RegisterEvent("FORBIDDEN_NAME_PLATE_UNIT_REMOVED")
 eventFrame:RegisterEvent("UNIT_DIED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("INSPECT_READY")
+eventFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         Cortio.Roster:EnsurePlayerInfo()
+        
+        -- Register addon message prefix (verified at each zone load)
+        if not C_ChatInfo.IsAddonMessagePrefixRegistered(Cortio.Data.COMM_PREFIX) then
+            local regOk = C_ChatInfo.RegisterAddonMessagePrefix(Cortio.Data.COMM_PREFIX)
+            if not regOk then
+                C_Timer.After(2, function()
+                    C_ChatInfo.RegisterAddonMessagePrefix(Cortio.Data.COMM_PREFIX)
+                end)
+            end
+        end
         
         Cortio.Marks.Active = {}
         for unit, _ in pairs(Cortio.UI.ActiveNameplates) do
@@ -50,9 +66,9 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Cortio.Marks:QueueSecureBtnUpdate()
         
         C_Timer.After(1, function() Cortio.Roster:AutoRegisterByClass(); Cortio.Roster:RegisterPartyWatchers() end)
-        C_Timer.After(2, function() Cortio.Net:SendGroupMessage("SYNCREQ", "SyncReq") end)
+        C_Timer.After(2, function() Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
         C_Timer.After(3, function() Cortio.Roster:AutoRegisterByClass(); Cortio.Roster:RegisterPartyWatchers(); Cortio.UI:UpdatePanel() end)
-        C_Timer.After(5, function() Cortio.Net:SendGroupMessage("SYNCREQ", "SyncReq") end)
+        C_Timer.After(5, function() Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
         
         Cortio.UI:SetupKickIcon()
         
@@ -86,7 +102,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             Cortio.Roster:RegisterPartyWatchers()
             Cortio.Roster:AutoRegisterByClass()
             Cortio.UI:UpdatePanel()
-            Cortio.Net:SendGroupMessage("SYNCREQ", "SyncReq")
+            Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
         end)
         C_Timer.After(3, function()
             Cortio.Roster:RegisterPartyWatchers()
@@ -95,6 +111,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         
     elseif event == "INSPECT_READY" then
         Cortio.Roster:OnInspectReady(arg1)
+
+    elseif event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
+        Cortio.Roster:Rebuild()
+        Cortio.Roster:AutoRegisterByClass()
+        Cortio.UI:UpdatePanel()
+        Cortio.UI:SetupKickIcon()
 
     elseif event == "UNIT_DIED" then
         local cleared = false
@@ -119,7 +141,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
 
             if shouldClear then
                 if mark.playerName == Cortio.PlayerName then
-                    Cortio.Net:SendGroupMessage("UNMARK:" .. (Cortio.PlayerClass or "UNKNOWN") .. ":0:0", "Send")
+                    Cortio.Net:SendGroupMessage("V1|UNMARK", "Send")
                 end
                 table.remove(Cortio.Marks.Active, i)
                 cleared = true
@@ -131,11 +153,19 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         if arg1 == Cortio.Data.COMM_PREFIX then
             local _, sender = ...
             if not sender then return end
-            local sName = strsplit("-", sender)
-            local pName = Cortio.PlayerName and strsplit("-", Cortio.PlayerName) or ""
-            if sender == Cortio.PlayerName or sName == pName then return end
+            local ambigSender = Ambiguate(sender, "short")
+            local ambigPlayer = Cortio.PlayerName and Ambiguate(Cortio.PlayerName, "short") or ""
+            if sender == Cortio.PlayerName or ambigSender == ambigPlayer then return end
             
-            local action, p2, p3, p4, p5, p6 = strsplit(":", arg2, 7)
+            Cortio.Net:LogReceived(arg1, arg2, sender)
+            
+            -- V1 protocol uses | separator; legacy uses :
+            local version, action, p2, p3, p4, p5, p6
+            if arg2:sub(1, 3) == "V1|" then
+                version, action, p2, p3, p4, p5, p6 = strsplit("|", arg2, 7)
+            else
+                action, p2, p3, p4, p5, p6 = strsplit(":", arg2, 7)
+            end
             local rPlayer = FindRosterPlayer(sender) or sender
             
             if action == "SYNCREQ" then
@@ -264,7 +294,7 @@ castDetectFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spell
     Cortio.UI:UpdatePanel()
     Cortio.UI:UpdateKickCooldown()
 
-    Cortio.Net:SendGroupMessage("CD:"..cdDuration, "CD")
+    Cortio.Net:SendGroupMessage("V1|CD|"..cdDuration, "CD")
 end)
 
 local combatLogFrame = CreateFrame("Frame")
@@ -306,16 +336,47 @@ combatLogFrame:SetScript("OnEvent", function(self, event)
     end
 end)
 
-local ticker = 0
-local updateFrame = CreateFrame("Frame")
-updateFrame:SetScript("OnUpdate", function(self, elapsed)
-    ticker = ticker + elapsed
-    if ticker >= 0.25 then
-        ticker = 0
+-- Smart panel ticker: only runs when CDs are active
+Cortio.PanelTicker = nil
+
+function Cortio.StartPanelTicker()
+    if Cortio.PanelTicker then return end
+    Cortio.PanelTicker = C_Timer.NewTicker(0.25, function()
         if Cortio.UI.Panel and Cortio.UI.Panel:IsShown() then
             Cortio.UI:UpdatePanel()
         end
         Cortio.UI:UpdateAllNameplates()
+        
+        -- Auto-stop when no active CDs and no visible nameplates
+        local hasWork = false
+        local now = GetTime()
+        for _, data in pairs(Cortio.RosterList) do
+            if data.cdEnd and data.cdEnd > now then
+                hasWork = true
+                break
+            end
+        end
+        if not hasWork then
+            for _ in pairs(Cortio.UI.ActiveNameplates) do
+                hasWork = true
+                break
+            end
+        end
+        if not hasWork and not (Cortio.UI.Panel and Cortio.UI.Panel:IsShown()) then
+            Cortio.PanelTicker:Cancel()
+            Cortio.PanelTicker = nil
+        end
+    end)
+end
+
+-- Auto-start ticker when UpdatePanel detects active CDs
+hooksecurefunc(Cortio.UI, "UpdatePanel", function()
+    local now = GetTime()
+    for _, data in pairs(Cortio.RosterList) do
+        if data.cdEnd and data.cdEnd > now then
+            Cortio.StartPanelTicker()
+            return
+        end
     end
 end)
 

@@ -117,6 +117,24 @@ for sid, data in pairs(Cortio.Data.ALL_INTERRUPTS) do
     end
 end
 
+-- Spec-specific interrupt overrides (specId -> interrupt data)
+-- Only specs where the interrupt differs from the class default
+Cortio.Data.SPEC_INTERRUPTS = {
+    -- Hunter: BM & MM use Counter Shot (24s), Survival uses Muzzle (15s)
+    [253] = { spellId = 147362, baseCD = 24 },  -- Beast Mastery
+    [254] = { spellId = 147362, baseCD = 24 },  -- Marksmanship
+    [255] = { spellId = 187707, baseCD = 15 },  -- Survival
+    -- Druid: Balance uses Solar Beam (60s), others use Skull Bash (15s)
+    [102] = { spellId = 78675,  baseCD = 60 },  -- Balance
+    [103] = { spellId = 106839, baseCD = 15 },  -- Feral
+    [104] = { spellId = 106839, baseCD = 15 },  -- Guardian
+    [105] = { spellId = 106839, baseCD = 15 },  -- Restoration
+    -- Warlock: Demonology uses Axe Toss (30s), others use Spell Lock (24s)
+    [265] = { spellId = 19647,  baseCD = 24 },  -- Affliction
+    [266] = { spellId = 119914, baseCD = 30 },  -- Demonology
+    [267] = { spellId = 19647,  baseCD = 24 },  -- Destruction
+}
+
 function Cortio.Data:GetRaidIconString(slot, size)
     size = size or 14
     local c = Cortio.Data.RAID_ICON_COORDS[slot]
@@ -131,6 +149,33 @@ function Cortio.Data:GetClassInterruptCD(class)
         return Cortio.Data.ALL_INTERRUPTS[sid].cd
     end
     return 15
+end
+
+function Cortio.Data:GetInterruptSpellForUnit(playerName)
+    local data = Cortio.RosterList and Cortio.RosterList[playerName]
+    if not data then return nil, 15 end
+    -- Try spec-specific first
+    if data.specId and data.specId > 0 then
+        local specData = Cortio.Data.SPEC_INTERRUPTS[data.specId]
+        if specData then
+            return specData.spellId, specData.baseCD
+        end
+    end
+    -- Fall back to class default
+    local sid = Cortio.Data.CLASS_INTERRUPT_SPELLID[data.class]
+    local cd = Cortio.Data:GetClassInterruptCD(data.class)
+    return sid, cd
+end
+
+function Cortio.Data:GetExpectedCooldownForUnit(playerName)
+    local _, cd = Cortio.Data:GetInterruptSpellForUnit(playerName)
+    return cd or 15
+end
+
+function Cortio.Data:UpdateCooldownState(playerName, cdEnd, cdTotal)
+    if not Cortio.RosterList or not Cortio.RosterList[playerName] then return end
+    Cortio.RosterList[playerName].cdEnd = cdEnd
+    Cortio.RosterList[playerName].cdTotal = cdTotal
 end
 
 function Cortio.Data:ShortName(fullName)

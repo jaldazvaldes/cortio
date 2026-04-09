@@ -10,6 +10,7 @@ Cortio.RosterList = {}
 Cortio.InspectQueue = {}
 local inspectPending = false
 local specCache = {}
+local specIdCache = {}
 
 function Cortio.Roster:EnsurePlayerInfo()
     if not Cortio.PlayerName then
@@ -71,14 +72,17 @@ function Cortio.Roster:Rebuild()
         local _, class = UnitClass(unit)
         if fullName and class then
             local specIcon = "0"
+            local specId = 0
             if UnitIsUnit(unit, "player") then
                 local specIndex = GetSpecialization()
                 if specIndex then
-                    local si = select(4, GetSpecializationInfo(specIndex))
-                    if si then specIcon = tostring(si) end
+                    local id, _, _, icon = GetSpecializationInfo(specIndex)
+                    if icon then specIcon = tostring(icon) end
+                    if id then specId = id end
                 end
             elseif specCache[fullName] then
                 specIcon = specCache[fullName]
+                specId = specIdCache[fullName] or 0
             else
                 local inQueue = false
                 for _, u in ipairs(Cortio.InspectQueue) do
@@ -90,13 +94,21 @@ function Cortio.Roster:Rebuild()
                 end
             end
             
+            -- Use spec-aware CD when available
             local old = Cortio.RosterList[fullName]
+            local baseCd = Cortio.Data:GetClassInterruptCD(class)
+            if specId > 0 and Cortio.Data.SPEC_INTERRUPTS then
+                local specData = Cortio.Data.SPEC_INTERRUPTS[specId]
+                if specData then baseCd = specData.baseCD end
+            end
             newRoster[fullName] = {
                 unit = unit,
                 class = class,
                 specIcon = specIcon,
+                specId = specId,
                 cdEnd = old and old.cdEnd or 0,
-                cdTotal = old and old.cdTotal or Cortio.Data:GetClassInterruptCD(class)
+                cdTotal = old and old.cdTotal or baseCd,
+                lastResult = old and old.lastResult or nil,
             }
             if UnitIsUnit(unit, "player") then
                 Cortio.PlayerName = fullName
@@ -149,12 +161,18 @@ function Cortio.Roster:AutoRegisterByClass()
             if fullName then
                 local _, cls = UnitClass(u)
                 if cls and Cortio.Data.CLASS_INTERRUPT_SPELLID[cls] and not Cortio.RosterList[fullName] then
+                    local sid = specIdCache[fullName] or 0
+                    local baseCd = Cortio.Data:GetClassInterruptCD(cls)
+                    if sid > 0 and Cortio.Data.SPEC_INTERRUPTS and Cortio.Data.SPEC_INTERRUPTS[sid] then
+                        baseCd = Cortio.Data.SPEC_INTERRUPTS[sid].baseCD
+                    end
                     Cortio.RosterList[fullName] = {
                         unit     = u,
                         class    = cls,
                         specIcon = specCache[fullName] or "0",
+                        specId   = sid,
                         cdEnd    = 0,
-                        cdTotal  = Cortio.Data:GetClassInterruptCD(cls),
+                        cdTotal  = baseCd,
                     }
                 end
             end
@@ -191,6 +209,7 @@ function Cortio.Roster:OnInspectReady(guid)
                         local si = select(4, GetSpecializationInfoByID(specId))
                         if si then specIcon = tostring(si) end
                         specCache[fullName] = specIcon
+                        specIdCache[fullName] = specId
                         Cortio.Roster:Rebuild()
                         if Cortio.UI then Cortio.UI:UpdatePanel() end
                     end
