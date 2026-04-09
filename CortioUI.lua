@@ -1,5 +1,5 @@
 --------------------------------------------------------------
--- CORTIO - UI
+-- CORTIO - UI (Modern Display)
 --------------------------------------------------------------
 Cortio = Cortio or {}
 Cortio.UI = {}
@@ -8,91 +8,240 @@ Cortio.UI.ActiveNameplates = {}
 local nameplateFrames = {}
 local MAX_ICONS_PER_PLATE = 8
 
+-- ============================================================
+-- Design Constants
+-- ============================================================
+local FRAME_WIDTH       = 260
+local HEADER_HEIGHT     = 28
+local BAR_HEIGHT        = 26
+local ICON_SIZE         = 20
+local PADDING           = 6
+local BAR_GAP           = 2
+local HEADER_GAP        = 2
+
+-- Color Palette (Cortio: deep blue + cyan accent)
+local C_BG        = { 8/255, 12/255, 24/255 }         -- #080c18
+local C_HEADER_BG = { 10/255, 16/255, 30/255 }        -- #0a101e
+local C_BAR_BG    = { 14/255, 20/255, 36/255 }        -- #0e1424
+local C_ACCENT    = { 0, 212/255, 255/255 }            -- #00d4ff
+local C_READY     = { 68/255, 255/255, 136/255 }      -- #44ff88
+local C_CD_HIGH   = { 255/255, 68/255, 68/255 }       -- #ff4444 (just used)
+local C_CD_MID    = { 255/255, 170/255, 0 }            -- #ffaa00 (mid cd)
+local C_BORDER    = { 0, 140/255, 200/255 }            -- #008cc8
+
+-- Hex strings (avoid allocations)
+local HEX_READY   = "44FF88"
+local HEX_CD_HIGH = "FF4444"
+local HEX_CD_MID  = "FFAA00"
+local HEX_CD_LOW  = "FFFF66"
+
+local STRIP_HEIGHT = 2  -- progress strip at bottom of each row
+
+local function getCooldownColor(ratio)
+    -- ratio = remaining / total (1.0 = just used, 0.0 = almost ready)
+    if ratio > 0.6 then
+        return C_CD_HIGH[1], C_CD_HIGH[2], C_CD_HIGH[3], HEX_CD_HIGH
+    elseif ratio > 0.3 then
+        return C_CD_MID[1], C_CD_MID[2], C_CD_MID[3], HEX_CD_MID
+    else
+        return C_READY[1], C_READY[2], C_READY[3], HEX_CD_LOW
+    end
+end
+
+-- ============================================================
+-- Panel Frame
+-- ============================================================
 local panel = CreateFrame("Frame", "CortioPanelFrame", UIParent, "BackdropTemplate")
-panel:SetSize(250, 30)
+panel:SetSize(FRAME_WIDTH, HEADER_HEIGHT + 10)
 panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
 panel:SetMovable(true)
 panel:EnableMouse(true)
 panel:RegisterForDrag("LeftButton")
 panel:SetScript("OnDragStart", panel.StartMoving)
-panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
+panel:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    if CortioDB then
+        local point, _, relPoint, x, y = self:GetPoint()
+        CortioDB.framePoint = { point, nil, relPoint, x, y }
+    end
+end)
 panel:SetFrameStrata("HIGH")
 panel:SetClampedToScreen(true)
-panel:SetBackdrop({
-    bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 },
-})
-panel:SetBackdropColor(0.03, 0.03, 0.08, 0.93)
-panel:SetBackdropBorderColor(0.0, 0.75, 1.0, 0.85)
 
-local titleBg = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
-titleBg:SetPoint("TOPLEFT", panel, "TOPLEFT", 3, -3)
-titleBg:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -3, -3)
-titleBg:SetHeight(17)
-titleBg:SetColorTexture(0.0, 0.45, 0.75, 0.30)
+-- Dark background
+local panelBg = panel:CreateTexture(nil, "BACKGROUND")
+panelBg:SetAllPoints()
+panelBg:SetColorTexture(C_BG[1], C_BG[2], C_BG[3], 0.95)
 
-local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-title:SetPoint("TOP", panel, "TOP", 0, -6)
-title:SetText("|cFF00D4FF--|r |cFFFFFFFFCORTIO|r |cFF00D4FF--|r")
+-- Subtle edge
+panel:SetBackdrop({ edgeFile = "Interface\\BUTTONS\\WHITE8X8", edgeSize = 1 })
+panel:SetBackdropBorderColor(C_BORDER[1], C_BORDER[2], C_BORDER[3], 0.35)
 
-local separator = panel:CreateTexture(nil, "ARTWORK")
-separator:SetPoint("TOPLEFT", panel, "TOPLEFT", 5, -21)
-separator:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -5, -21)
-separator:SetHeight(1)
-separator:SetColorTexture(0.0, 0.75, 1.0, 0.45)
+-- Header
+local headerFrame = CreateFrame("Frame", nil, panel)
+headerFrame:SetHeight(HEADER_HEIGHT)
+headerFrame:SetPoint("TOPLEFT")
+headerFrame:SetPoint("TOPRIGHT")
+
+local headerBg = headerFrame:CreateTexture(nil, "BACKGROUND")
+headerBg:SetAllPoints()
+headerBg:SetColorTexture(C_HEADER_BG[1], C_HEADER_BG[2], C_HEADER_BG[3], 0.98)
+
+-- Cyan accent line below header
+local accentLine = headerFrame:CreateTexture(nil, "ARTWORK")
+accentLine:SetHeight(2)
+accentLine:SetPoint("BOTTOMLEFT")
+accentLine:SetPoint("BOTTOMRIGHT")
+accentLine:SetColorTexture(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3], 0.8)
+
+-- Title
+local titleText = headerFrame:CreateFontString(nil, "OVERLAY")
+titleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+titleText:SetShadowOffset(1, -1)
+titleText:SetPoint("LEFT", 10, 0)
+titleText:SetText("|cff00d4ffCORTIO|r")
+
+-- Badge pill (ready/total counter)
+local badgeFrame = CreateFrame("Frame", nil, headerFrame)
+badgeFrame:SetHeight(16)
+badgeFrame:SetPoint("LEFT", titleText, "RIGHT", 8, 0)
+
+local badgeBg = badgeFrame:CreateTexture(nil, "BACKGROUND")
+badgeBg:SetAllPoints()
+badgeBg:SetColorTexture(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3], 0.12)
+
+local badgeText = badgeFrame:CreateFontString(nil, "OVERLAY")
+badgeText:SetFont("Fonts\\ARIALN.TTF", 9, "")
+badgeText:SetShadowOffset(1, -1)
+badgeText:SetPoint("CENTER", 0, 0)
+badgeText:SetTextColor(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3])
 
 Cortio.UI.Panel = panel
 
-local panelRows = {}
+-- Content area (holds bars)
+local contentFrame = CreateFrame("Frame", nil, panel)
+contentFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -HEADER_GAP)
+contentFrame:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
 
-local function GetOrCreatePanelRow(i)
-    if panelRows[i] then return panelRows[i] end
-    
-    local row = CreateFrame("Frame", nil, panel)
-    row:SetSize(238, 15)
-    row:SetPoint("TOPLEFT", panel, "TOPLEFT", 6, -24 - (i - 1) * 15)
-    
-    row.raidIcon = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.raidIcon:SetSize(14, 14)
-    row.raidIcon:SetPoint("LEFT", row, "LEFT", 0, 0)
-    row.raidIcon:SetJustifyH("CENTER")
-    
-    row.classIcon = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.classIcon:SetSize(16, 16)
-    row.classIcon:SetPoint("LEFT", row.raidIcon, "RIGHT", 4, 0)
-    row.classIcon:SetJustifyH("CENTER")
-    
-    row.playerText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.playerText:SetPoint("LEFT", row.classIcon, "RIGHT", 4, 0)
-    row.playerText:SetPoint("RIGHT", row, "RIGHT", -40, 0)
-    row.playerText:SetJustifyH("LEFT")
-    row.playerText:SetWordWrap(false)
-    
-    row.cdText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.cdText:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-    row.cdText:SetJustifyH("RIGHT")
-    
-    row:Hide()
-    panelRows[i] = row
-    return row
+-- ============================================================
+-- Row Pool (Frame + Cooldown spiral + progress strip)
+-- ============================================================
+local barPool = {}
+local activeBarCount = 0
+
+local function getBar(index)
+    local bar = barPool[index]
+    if bar then return bar end
+
+    bar = CreateFrame("Frame", nil, contentFrame)
+    bar:SetHeight(BAR_HEIGHT)
+
+    -- Dark row background
+    bar.bg = bar:CreateTexture(nil, "BACKGROUND")
+    bar.bg:SetAllPoints()
+    bar.bg:SetColorTexture(C_BAR_BG[1], C_BAR_BG[2], C_BAR_BG[3], 0.9)
+
+    -- Thin border (state-colored)
+    bar.border = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    bar.border:SetAllPoints()
+    bar.border:SetBackdrop({ edgeFile = "Interface\\BUTTONS\\WHITE8X8", edgeSize = 1 })
+
+    -- Class-color left stripe (3px accent — Cortio signature)
+    bar.classStripe = bar:CreateTexture(nil, "ARTWORK", nil, 3)
+    bar.classStripe:SetWidth(3)
+    bar.classStripe:SetPoint("TOPLEFT", 0, 0)
+    bar.classStripe:SetPoint("BOTTOMLEFT", 0, 0)
+
+    -- Icon background (class-tinted)
+    bar.iconBg = bar:CreateTexture(nil, "ARTWORK", nil, 1)
+    bar.iconBg:SetSize(ICON_SIZE + 2, ICON_SIZE + 2)
+    bar.iconBg:SetPoint("LEFT", 7, 0)
+    bar.iconBg:SetColorTexture(0.1, 0.1, 0.1, 0.8)
+
+    -- Interrupt spell icon
+    bar.icon = bar:CreateTexture(nil, "ARTWORK", nil, 2)
+    bar.icon:SetSize(ICON_SIZE, ICON_SIZE)
+    bar.icon:SetPoint("LEFT", 7, 0)
+    bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- Cooldown spiral on icon (WoW-native swipe)
+    bar.iconCD = CreateFrame("Cooldown", nil, bar, "CooldownFrameTemplate")
+    bar.iconCD:SetAllPoints(bar.icon)
+    bar.iconCD:SetDrawSwipe(true)
+    bar.iconCD:SetDrawEdge(true)
+    bar.iconCD:SetDrawBling(false)
+    bar.iconCD:SetSwipeColor(0, 0, 0, 0.6)
+    bar.iconCD:SetHideCountdownNumbers(true)
+
+    -- Tooltip on icon hover
+    bar.iconHit = CreateFrame("Frame", nil, bar)
+    bar.iconHit:SetAllPoints(bar.icon)
+    bar.iconHit:EnableMouse(true)
+    bar.iconHit:SetScript("OnEnter", function(self)
+        local id = self._spellID
+        if not id then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetSpellByID(id)
+        GameTooltip:Show()
+    end)
+    bar.iconHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Raid marker
+    bar.marker = bar:CreateTexture(nil, "ARTWORK", nil, 3)
+    bar.marker:SetSize(14, 14)
+    bar.marker:SetPoint("LEFT", bar.icon, "RIGHT", 4, 0)
+
+    -- Player name
+    bar.nameText = bar:CreateFontString(nil, "OVERLAY")
+    bar.nameText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    bar.nameText:SetShadowOffset(1, -1)
+    bar.nameText:SetJustifyH("LEFT")
+    bar.nameText:SetWordWrap(false)
+
+    -- Status text (READY / 4.2s)
+    bar.statusText = bar:CreateFontString(nil, "OVERLAY")
+    bar.statusText:SetFont("Fonts\\ARIALN.TTF", 10, "")
+    bar.statusText:SetShadowOffset(1, -1)
+    bar.statusText:SetPoint("RIGHT", -PADDING, 0)
+    bar.statusText:SetJustifyH("RIGHT")
+
+    -- Result indicator (✓/✗)
+    bar.resultText = bar:CreateFontString(nil, "OVERLAY")
+    bar.resultText:SetFont("Fonts\\ARIALN.TTF", 8, "")
+    bar.resultText:SetShadowOffset(1, -1)
+    bar.resultText:SetPoint("RIGHT", bar.statusText, "LEFT", -3, 0)
+    bar.resultText:SetJustifyH("RIGHT")
+
+    -- Progress strip (thin bar at bottom of row)
+    bar.strip = bar:CreateTexture(nil, "ARTWORK", nil, 4)
+    bar.strip:SetHeight(STRIP_HEIGHT)
+    bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
+
+    bar:Hide()
+    barPool[index] = bar
+    return bar
 end
 
-local function HidePanelRow(i)
-    if panelRows[i] then panelRows[i]:Hide() end
-end
-
+-- ============================================================
+-- UpdatePanel (Cooldown spiral + progress strip rendering)
+-- ============================================================
 function Cortio.UI:UpdatePanel()
-    for i = 1, #panelRows do HidePanelRow(i) end
-    
+    -- Hide all existing bars
+    for i = 1, activeBarCount do
+        if barPool[i] then barPool[i]:Hide() end
+    end
+
     local entries = {}
     local now = GetTime()
-    
+    local readyCount = 0
+    local totalCount = 0
+
     for rPlayerName, data in pairs(Cortio.RosterList) do
         local rClass = data.class
-        local rSpec = data.specIcon
-        
+        local sLeft = (data.cdEnd or 0) - now
+        local isReady = sLeft <= 0
+
+        -- Find assigned mark
         local assignedMark = nil
         local rShort = Cortio.Data:ShortName(rPlayerName)
         for _, m in ipairs(Cortio.Marks.Active) do
@@ -101,85 +250,176 @@ function Cortio.UI:UpdatePanel()
                 break
             end
         end
-        
-        local color = Cortio.Data.CLASS_COLORS[rClass] or "FFFFFFFF"
-        local playerStr = "|c" .. color .. Cortio.Data:ShortName(rPlayerName) .. "|r"
-        
-        if rSpec and rSpec ~= "0" and rSpec ~= "" then
-            playerStr = "|T" .. rSpec .. ":14:14:0:0|t " .. playerStr
-        end
-        
-        local iconID = Cortio.Data.CLASS_INTERRUPT_ICONS[rClass]
-        local iconsStr = iconID and ("|T" .. iconID .. ":16:16:0:0|t ") or ""
-        
-        local raidStr = ""
-        local markerSlot = 0
-        if assignedMark and assignedMark.markerSlot and assignedMark.markerSlot > 0 then
-            raidStr = Cortio.Data:GetRaidIconString(assignedMark.markerSlot, 14)
-            markerSlot = assignedMark.markerSlot
-        end
-        
-        local cdText = ""
-        local sLeft = data.cdEnd - now
-        
-        if sLeft > 0 then
-            local ratio = sLeft / data.cdTotal
-            local cdCol = "FFFF66"
-            if ratio > 0.6 then cdCol = "FF4444" elseif ratio > 0.3 then cdCol = "FFAA00" end
-            
-            local resultIcon = ""
-            if data.lastResult == "SUCCESS" then resultIcon = " |cFF55FF55[✓]|r"
-            elseif data.lastResult == "MISSED" then resultIcon = " |cFFFF5555[X]|r"
-            elseif data.lastResult == "USED" then resultIcon = " |cFFFFFF55[-]|r" end
-            
-            cdText = string.format("|cff%s%.1fs|r%s", cdCol, sLeft, resultIcon)
-        else
-            cdText = "|cff44FF88Ready|r"
-        end
-        
-        table.insert(entries, { 
-            icons = iconsStr, 
-            raidIcon = raidStr, 
-            cuttersText = playerStr, 
-            playerName = rPlayerName, 
-            markerSlot = markerSlot,
-            cdText = cdText
+
+        totalCount = totalCount + 1
+        if isReady then readyCount = readyCount + 1 end
+
+        table.insert(entries, {
+            playerName = rPlayerName,
+            class = rClass,
+            specId = data.specId or 0,
+            mark = assignedMark,
+            markerSlot = assignedMark and assignedMark.markerSlot or 0,
+            cdEnd = data.cdEnd or 0,
+            cdTotal = data.cdTotal or 15,
+            remaining = isReady and 0 or sLeft,
+            isReady = isReady,
+            lastResult = data.lastResult,
         })
     end
+
     if #entries == 0 then
         panel:Hide()
         return
     end
-    
+
+    -- Sort: marked first, then ready, then by remaining
     table.sort(entries, function(a, b)
         if a.markerSlot > 0 and b.markerSlot == 0 then return true end
         if b.markerSlot > 0 and a.markerSlot == 0 then return false end
-        if a.markerSlot > 0 and b.markerSlot > 0 and a.markerSlot ~= b.markerSlot then 
-            return a.markerSlot < b.markerSlot 
+        if a.markerSlot > 0 and b.markerSlot > 0 and a.markerSlot ~= b.markerSlot then
+            return a.markerSlot < b.markerSlot
         end
+        if a.isReady ~= b.isReady then return a.isReady end
+        if not a.isReady and not b.isReady then return a.remaining < b.remaining end
         return a.playerName < b.playerName
     end)
-    
-    local idx = 0
-    for _, entry in ipairs(entries) do
-        idx = idx + 1
-        local row = GetOrCreatePanelRow(idx)
-        row.raidIcon:SetText(entry.raidIcon)
-        row.classIcon:SetText(entry.icons)
-        row.playerText:SetText(entry.cuttersText)
-        row.cdText:SetText(entry.cdText)
-        row:Show()
+
+    local barWidth = FRAME_WIDTH - PADDING * 2
+
+    for i, entry in ipairs(entries) do
+        local bar = getBar(i)
+
+        bar:SetWidth(barWidth)
+        bar:SetPoint("TOPLEFT", contentFrame, "TOPLEFT",
+            PADDING, -(BAR_GAP + (i - 1) * (BAR_HEIGHT + BAR_GAP)))
+
+        -- Parse class color
+        local colorHex = Cortio.Data.CLASS_COLORS[entry.class] or "FFFFFFFF"
+        local classR = tonumber(colorHex:sub(3, 4), 16) / 255
+        local classG = tonumber(colorHex:sub(5, 6), 16) / 255
+        local classB = tonumber(colorHex:sub(7, 8), 16) / 255
+
+        -- Class stripe
+        bar.classStripe:SetColorTexture(classR, classG, classB, 0.8)
+
+        -- State-dependent visuals
+        if entry.isReady then
+            -- Ready: subtle bright tint on background, green border
+            bar.bg:SetColorTexture(
+                C_BAR_BG[1] + C_READY[1] * 0.04,
+                C_BAR_BG[2] + C_READY[2] * 0.04,
+                C_BAR_BG[3] + C_READY[3] * 0.04, 0.92)
+            bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], 0.25)
+            bar.statusText:SetText("|cff" .. HEX_READY .. "READY|r")
+            -- Icon cooldown: clear
+            bar.iconCD:SetCooldown(0, 0)
+            -- Progress strip: full width, green
+            bar.strip:SetWidth(barWidth - 6)
+            bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], 0.45)
+        else
+            -- On CD: default dark background, colored border
+            local ratio = entry.remaining / entry.cdTotal
+            local r, g, b, hex = getCooldownColor(ratio)
+            bar.bg:SetColorTexture(C_BAR_BG[1], C_BAR_BG[2], C_BAR_BG[3], 0.9)
+            bar.border:SetBackdropBorderColor(r, g, b, 0.15)
+
+            local text
+            if entry.remaining >= 10 then
+                text = math.floor(entry.remaining) .. "s"
+            else
+                text = string.format("%.1fs", entry.remaining)
+            end
+            bar.statusText:SetText("|cff" .. hex .. text .. "|r")
+
+            -- Icon cooldown: spiral swipe
+            bar.iconCD:SetCooldown(entry.cdEnd - entry.cdTotal, entry.cdTotal)
+
+            -- Progress strip: width proportional to elapsed time
+            local progress = (entry.cdTotal - entry.remaining) / entry.cdTotal
+            if progress < 0 then progress = 0 end
+            if progress > 1 then progress = 1 end
+            local stripW = math.max(1, (barWidth - 6) * progress)
+            bar.strip:SetWidth(stripW)
+            bar.strip:SetColorTexture(r, g, b, 0.5)
+        end
+
+        -- Spell icon (spec-aware)
+        local spellId = nil
+        if entry.specId > 0 and Cortio.Data.SPEC_INTERRUPTS[entry.specId] then
+            spellId = Cortio.Data.SPEC_INTERRUPTS[entry.specId].spellId
+        end
+        if not spellId then
+            spellId = Cortio.Data.CLASS_INTERRUPT_SPELLID[entry.class]
+        end
+
+        bar.iconHit._spellID = spellId
+
+        local iconID = Cortio.Data.CLASS_INTERRUPT_ICONS[entry.class]
+        if iconID then
+            bar.icon:SetTexture(tonumber(iconID))
+            bar.icon:Show()
+        else
+            bar.icon:Hide()
+        end
+
+        -- Class-tinted icon background
+        bar.iconBg:SetColorTexture(classR * 0.25, classG * 0.25, classB * 0.25, 0.8)
+
+        -- Raid marker
+        bar.nameText:ClearAllPoints()
+        if entry.markerSlot and entry.markerSlot > 0 then
+            bar.marker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. entry.markerSlot)
+            bar.marker:Show()
+            bar.nameText:SetPoint("LEFT", bar.marker, "RIGHT", 4, 0)
+        else
+            bar.marker:Hide()
+            bar.nameText:SetPoint("LEFT", bar.icon, "RIGHT", 6, 0)
+        end
+        bar.nameText:SetPoint("RIGHT", bar.statusText, "LEFT", -4, 0)
+
+        -- Player name (class colored)
+        bar.nameText:SetText("|c" .. colorHex .. Cortio.Data:ShortName(entry.playerName) .. "|r")
+
+        -- Result indicator
+        local resultIcon = ""
+        if entry.lastResult == "SUCCESS" then resultIcon = "|cFF55FF55✓|r"
+        elseif entry.lastResult == "MISSED" then resultIcon = "|cFFFF5555✗|r"
+        elseif entry.lastResult == "USED" then resultIcon = "|cFFFFFF55–|r"
+        end
+        bar.resultText:SetText(resultIcon)
+
+        bar:Show()
     end
-    
-    for i = idx + 1, #panelRows do HidePanelRow(i) end
-    
-    panel:SetHeight(28 + idx * 15)
+
+    activeBarCount = #entries
+
+    -- Update badge
+    badgeText:SetText(readyCount .. "/" .. totalCount)
+    badgeFrame:SetWidth(badgeText:GetStringWidth() + 12)
+
+    -- Resize panel to fit content
+    local contentHeight = #entries * (BAR_HEIGHT + BAR_GAP) + BAR_GAP
+    panel:SetHeight(HEADER_HEIGHT + HEADER_GAP + contentHeight + 4)
+
+    -- Restore saved position on first show
+    if CortioDB and CortioDB.framePoint and not panel._posRestored then
+        local p = CortioDB.framePoint
+        if p[1] then
+            panel:ClearAllPoints()
+            panel:SetPoint(p[1], UIParent, p[3], p[4], p[5])
+        end
+        panel._posRestored = true
+    end
+
     panel:Show()
-    
+
     Cortio.Data:SafeCall("Nameplates", function() Cortio.UI:UpdateAllNameplates() end)
 end
 
--- Nameplates
+-- ============================================================
+-- Nameplates (unchanged)
+-- ============================================================
 local function CreateIconSubFrame(parent, index)
     local icon = CreateFrame("Frame", nil, parent)
     icon:SetSize(24, 24)
@@ -348,6 +588,9 @@ function Cortio.UI:UpdateAllNameplates()
     end
 end
 
+-- ============================================================
+-- Kick Icon (unchanged)
+-- ============================================================
 local kickIconFrame = CreateFrame("Frame", "CortioKickIconFrame", panel)
 kickIconFrame:SetSize(32, 32)
 kickIconFrame:SetPoint("RIGHT", panel, "LEFT", -6, 0)
@@ -408,6 +651,9 @@ end)
 kickIconFrame:Hide()
 panel:Hide()
 
+-- ============================================================
+-- Settings (unchanged)
+-- ============================================================
 local settingsCreated = false
 function Cortio.UI:CreateSettingsMenu()
     if settingsCreated then return end
@@ -457,6 +703,9 @@ function Cortio.UI:CreateSettingsMenu()
     Settings.RegisterAddOnCategory(category)
 end
 
+-- ============================================================
+-- Slash Commands (unchanged)
+-- ============================================================
 SLASH_CORTIO1 = "/cortio"
 SLASH_CORTIO2 = "/ct"
 SlashCmdList["CORTIO"] = function(msg)
@@ -491,6 +740,7 @@ SlashCmdList["CORTIO"] = function(msg)
     elseif cmd == "reset" then
         if not CortioDB then CortioDB = {} end
         CortioDB.scale = 1.0
+        CortioDB.framePoint = nil
         Cortio.UI.Panel:SetScale(1.0)
         Cortio.UI.Panel:ClearAllPoints()
         Cortio.UI.Panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
