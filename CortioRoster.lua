@@ -69,6 +69,8 @@ function Cortio.Roster:Rebuild()
             cleanRealm = okR and cr or nil
         end
         local fullName = cleanRealm and (cleanName .. "-" .. cleanRealm) or cleanName
+        local okGuid, unitGUID = pcall(UnitGUID, unit)
+        local guid = (okGuid and unitGUID) or nil
         local _, class = UnitClass(unit)
         if fullName and class then
             local specIcon = "0"
@@ -103,6 +105,7 @@ function Cortio.Roster:Rebuild()
             end
             newRoster[fullName] = {
                 unit = unit,
+                guid = guid,
                 class = class,
                 specIcon = specIcon,
                 specId = specId,
@@ -166,8 +169,10 @@ function Cortio.Roster:AutoRegisterByClass()
                     if sid > 0 and Cortio.Data.SPEC_INTERRUPTS and Cortio.Data.SPEC_INTERRUPTS[sid] then
                         baseCd = Cortio.Data.SPEC_INTERRUPTS[sid].baseCD
                     end
+                    local okG, uGuid = pcall(UnitGUID, u)
                     Cortio.RosterList[fullName] = {
                         unit     = u,
+                        guid     = (okG and uGuid) or nil,
                         class    = cls,
                         specIcon = specCache[fullName] or "0",
                         specId   = sid,

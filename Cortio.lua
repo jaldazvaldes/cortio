@@ -15,14 +15,65 @@ blockedFrame:SetScript("OnEvent", function(_, _, addon, func)
     end
 end)
 
-local function FindRosterPlayer(sender)
-    if Cortio.RosterList[sender] then return sender end
-    local ambig = Ambiguate(sender, "short")
-    if Cortio.RosterList[ambig] then return ambig end
-    for k in pairs(Cortio.RosterList) do
-        if Ambiguate(k, "short") == ambig then return k end
+-- ============================================================
+-- Unified player lookup: GUID > full name > Ambiguate > short name
+-- Used by both CHAT_MSG_ADDON and COMBAT_LOG_EVENT_UNFILTERED
+-- ============================================================
+local function FindRosterPlayerByGUIDOrName(sourceGUID, sourceName)
+    local resolvedBy = nil
+
+    -- 1. GUID match (most reliable — unique per player)
+    if sourceGUID then
+        for pName, data in pairs(Cortio.RosterList) do
+            if data.guid and data.guid == sourceGUID then
+                return pName, "GUID"
+            end
+        end
     end
-    return nil
+
+    -- 2. Exact full name match
+    if sourceName then
+        if Cortio.RosterList[sourceName] then
+            return sourceName, "FullName"
+        end
+
+        -- 3. Ambiguate match (handles cross-realm names)
+        local ambigSource = Ambiguate(sourceName, "short")
+        if Cortio.RosterList[ambigSource] then
+            return ambigSource, "Ambiguate"
+        end
+
+        -- 4. Short name match (least reliable, last resort)
+        local shortName = Cortio.Data:ShortName(sourceName)
+        for pName, _ in pairs(Cortio.RosterList) do
+            if Ambiguate(pName, "short") == ambigSource then
+                return pName, "AmbiguateLoop"
+            end
+        end
+        for pName, _ in pairs(Cortio.RosterList) do
+            if Cortio.Data:ShortName(pName) == shortName then
+                return pName, "ShortName"
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- Legacy wrapper for addon messages (no GUID available from chat)
+local function FindRosterPlayer(sender)
+    local player, _ = FindRosterPlayerByGUIDOrName(nil, sender)
+    return player
+end
+
+-- Debug toggle (enable with CortioDB.debugCombatLog = true or /ct debugcl)
+local function DebugCL(...)
+    if not CortioDB or not CortioDB.debugCombatLog then return end
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[i] = tostring(select(i, ...))
+    end
+    print("|cFF00FFFF[Cortio]|r |cFFAADDFF[CL]|r " .. table.concat(parts, " "))
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -39,6 +90,7 @@ eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
+
     if event == "PLAYER_ENTERING_WORLD" then
         Cortio.Roster:EnsurePlayerInfo()
         
@@ -94,6 +146,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Cortio.Roster:Rebuild()
         Cortio.Roster:AutoRegisterByClass()
         Cortio.Roster:RegisterPartyWatchers()
+        Cortio.RegisterPartyInterruptWatchers()
         Cortio.UI:UpdatePanel()
         if not InCombatLockdown() then
             Cortio.Marks:QueueSecureBtnUpdate()
@@ -101,13 +154,17 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         C_Timer.After(1, function()
             Cortio.Roster:RegisterPartyWatchers()
             Cortio.Roster:AutoRegisterByClass()
+            Cortio.RegisterPartyInterruptWatchers()
             Cortio.UI:UpdatePanel()
             Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
         end)
         C_Timer.After(3, function()
             Cortio.Roster:RegisterPartyWatchers()
             Cortio.Roster:AutoRegisterByClass()
+            Cortio.RegisterPartyInterruptWatchers()
         end)
+
+
         
     elseif event == "INSPECT_READY" then
         Cortio.Roster:OnInspectReady(arg1)
@@ -260,6 +317,9 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
     end
 end)
 
+-- ============================================================
+-- LOCAL PLAYER: interrupt detection with precise CD (proven working)
+-- ============================================================
 local lastInterruptBroadcastTime = 0
 local castDetectFrame = CreateFrame("Frame")
 castDetectFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
@@ -293,48 +353,216 @@ castDetectFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spell
 
     Cortio.UI:UpdatePanel()
     Cortio.UI:UpdateKickCooldown()
-
     Cortio.Net:SendGroupMessage("V1|CD|"..cdDuration, "CD")
 end)
 
-local combatLogFrame = CreateFrame("Frame")
-combatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-combatLogFrame:SetScript("OnEvent", function(self, event)
-    local _, subevent, _, sourceGUID, sourceName, _, _, _, _, _, _, spellId = CombatLogGetCurrentEventInfo()
-    if not sourceName or not subevent or not spellId then return end
+-- ============================================================
+-- REMOTE PARTY: detect party member interrupts via UNIT_SPELLCAST_SUCCEEDED
+-- (Confirmed working in WoW 12.0 - events DO fire for party members)
+-- ============================================================
+local partyInterruptFrame = CreateFrame("Frame")
+
+function Cortio.RegisterPartyInterruptWatchers()
+    partyInterruptFrame:UnregisterAllEvents()
+    if Cortio._partyFrame2 then Cortio._partyFrame2:UnregisterAllEvents() end
+    if not IsInGroup() then return end
     
-    local interruptData = Cortio.Data.ALL_INTERRUPTS[spellId]
-    if interruptData then
-        if subevent == "SPELL_CAST_SUCCESS" or subevent == "SPELL_INTERRUPT" or subevent == "SPELL_MISSED" then
-            local shortName = Cortio.Data:ShortName(sourceName)
-            local matchedPlayer = nil
-            
-            for pName, pData in pairs(Cortio.RosterList) do
-                if Cortio.Data:ShortName(pName) == shortName then
-                    matchedPlayer = pName
-                    break
-                end
+    local units = {}
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) then
+            table.insert(units, u)
+        end
+    end
+    
+    if #units == 0 then return end
+    
+    -- RegisterUnitEvent takes up to 2 unit args per call
+    if #units <= 2 then
+        partyInterruptFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", units[1], units[2])
+    else
+        partyInterruptFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", units[1], units[2])
+        if not Cortio._partyFrame2 then
+            Cortio._partyFrame2 = CreateFrame("Frame")
+            Cortio._partyFrame2:SetScript("OnEvent", function(self, ev, unit, castGUID, spellID)
+                Cortio.HandleRemoteInterrupt(unit, castGUID, spellID)
+            end)
+        end
+        if #units == 3 then
+            Cortio._partyFrame2:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", units[3])
+        else
+            Cortio._partyFrame2:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", units[3], units[4])
+        end
+    end
+    
+    local regOk = partyInterruptFrame:IsEventRegistered("UNIT_SPELLCAST_SUCCEEDED")
+    print("|cFF00FFFF[Cortio]|r Party watchers: " .. #units .. " units | reg=" .. tostring(regOk) .. " | units=" .. table.concat(units, ","))
+end
+
+local _remoteEventCount = 0
+local _remoteInterruptHits = 0
+function Cortio.HandleRemoteInterrupt(unit, castGUID, spellID)
+    if not spellID or not unit then return end
+    -- WoW 12.0: party spellIDs are tainted. Use string.match to create untainted copy
+    local cleanSpell
+    pcall(function()
+        local rawStr = tostring(spellID)
+        local numStr = rawStr and rawStr:match("(%d+)")
+        if numStr then cleanSpell = tonumber(numStr) end
+    end)
+    if not cleanSpell then return end
+    
+    -- Check if this spell is a known interrupt
+    local interruptData = Cortio.Data.ALL_INTERRUPTS[cleanSpell]
+    if not interruptData then
+        local okSpell, spellName = pcall(C_Spell.GetSpellName, cleanSpell)
+        if not (okSpell and spellName and Cortio.Data.INTERRUPT_NAME_TO_CD[spellName]) then
+            return
+        end
+    end
+
+    -- === INTERRUPT DETECTED ===
+    _remoteInterruptHits = _remoteInterruptHits + 1
+    
+    -- Identify the player
+    local okName, uName, uRealm = pcall(UnitName, unit)
+    if not okName or not uName then
+        if _remoteInterruptHits <= 5 then print("|cFFFF0000[Cortio] FAIL: UnitName(" .. unit .. ") failed|r") end
+        return
+    end
+    local fullName = (uRealm and uRealm ~= "") and (uName .. "-" .. uRealm) or uName
+    
+    local okGuid, unitGUID = pcall(UnitGUID, unit)
+    local guid = (okGuid and unitGUID) or nil
+    local matchedPlayer = FindRosterPlayerByGUIDOrName(guid, fullName)
+    
+    if _remoteInterruptHits <= 5 then
+        print("|cFF00FFFF[Cortio]|r INTERRUPT HIT #" .. _remoteInterruptHits .. ": unit=" .. unit .. " spell=" .. cleanSpell .. " name=" .. fullName .. " matched=" .. tostring(matchedPlayer))
+    end
+    
+    if not matchedPlayer then
+        local cls = interruptData and interruptData.class or nil
+        if not cls then
+            local okCls, _, engClass = pcall(UnitClass, unit)
+            if okCls and engClass then cls = engClass end
+        end
+        if cls then
+            Cortio.RosterList[fullName] = {
+                unit = unit, guid = guid, class = cls,
+                specIcon = "0", specId = 0, cdEnd = 0, cdTotal = 0, lastResult = nil,
+            }
+            matchedPlayer = fullName
+            if _remoteInterruptHits <= 5 then
+                print("|cFF00FFFF[Cortio]|r Auto-registered: " .. fullName .. " class=" .. cls)
             end
-            
-            if matchedPlayer then
-                local now = GetTime()
-                local cdTotal = Cortio.RosterList[matchedPlayer].cdTotal or interruptData.cd
-                
-                if subevent == "SPELL_CAST_SUCCESS" then
-                    Cortio.RosterList[matchedPlayer].cdEnd = now + cdTotal
-                    Cortio.RosterList[matchedPlayer].lastResult = "USED"
-                    if Cortio.UI then Cortio.UI:UpdatePanel() end
-                elseif subevent == "SPELL_INTERRUPT" then
-                    Cortio.RosterList[matchedPlayer].lastResult = "SUCCESS"
-                    if Cortio.UI then Cortio.UI:UpdatePanel() end
-                elseif subevent == "SPELL_MISSED" then
-                    Cortio.RosterList[matchedPlayer].lastResult = "MISSED"
-                    if Cortio.UI then Cortio.UI:UpdatePanel() end
+        end
+    end
+    
+    if not matchedPlayer then
+        if _remoteInterruptHits <= 5 then print("|cFFFF0000[Cortio] FAIL: no matchedPlayer for " .. fullName .. "|r") end
+        return
+    end
+    
+    local rosterData = Cortio.RosterList[matchedPlayer]
+    if guid and not rosterData.guid then rosterData.guid = guid end
+    
+    -- Compute cooldown: spec > spellId > class default
+    local cdTotal
+    if rosterData.specId and rosterData.specId > 0 and Cortio.Data.SPEC_INTERRUPTS then
+        local specData = Cortio.Data.SPEC_INTERRUPTS[rosterData.specId]
+        if specData then cdTotal = specData.baseCD end
+    end
+    if not cdTotal and interruptData then cdTotal = interruptData.cd end
+    if not cdTotal then cdTotal = Cortio.Data:GetClassInterruptCD(rosterData.class) or 15 end
+    
+    local now = GetTime()
+    rosterData.cdEnd = now + cdTotal
+    rosterData.cdTotal = cdTotal
+    rosterData.lastResult = "USED"
+    
+    if _remoteInterruptHits <= 5 then
+        print("|cFF00FFFF[Cortio]|r CD SET: " .. matchedPlayer .. " cd=" .. cdTotal .. " cdEnd=" .. string.format("%.1f", rosterData.cdEnd))
+    end
+    
+    if Cortio.UI then Cortio.UI:UpdatePanel() end
+    Cortio.StartPanelTicker()
+end
+
+
+
+
+local _frameEventCount = 0
+partyInterruptFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
+    _frameEventCount = _frameEventCount + 1
+    if _frameEventCount <= 5 then
+        print("|cFF00FFFF[Cortio]|r |cFF00FF00FRAME EVENT #" .. _frameEventCount .. ": " .. tostring(unit) .. " spell=" .. tostring(spellID) .. "|r")
+    end
+
+    -- Dump interrupt name table once
+    if _frameEventCount == 1 then
+        local n = 0
+        for _ in pairs(Cortio.Data.INTERRUPT_NAME_TO_CD) do n = n + 1 end
+        local names = {}
+        for name in pairs(Cortio.Data.INTERRUPT_NAME_TO_CD) do table.insert(names, name) end
+        print("|cFF00FFFF[Cortio]|r INT_TABLE (" .. n .. "): " .. table.concat(names, ", "))
+    end
+
+    if not spellID then return end
+
+    -- ================================================================
+    -- METHOD 1: Resolve spellID to a clean number via Slider trick
+    -- This is the same approach that works for local player detection.
+    -- The Slider trick strips WoW 12.0 taint from "secret" numbers.
+    -- ================================================================
+    local cleanSpell = Cortio.Taint:ResolveNumber(spellID)
+
+    -- METHOD 2: If Slider fails, try tostring extraction (numbers print OK)
+    if not cleanSpell then
+        pcall(function()
+            local rawStr = tostring(spellID)
+            if rawStr then
+                local numStr = rawStr:match("(%d+)")
+                if numStr then cleanSpell = tonumber(numStr) end
+            end
+        end)
+    end
+
+    if not cleanSpell then return end
+
+    -- Direct numeric lookup in ALL_INTERRUPTS (no tainted keys involved)
+    local interruptData = Cortio.Data.ALL_INTERRUPTS[cleanSpell]
+    if interruptData then
+        if _frameEventCount <= 10 then
+            print("|cFF00FFFF[Cortio]|r |cFFFFFF00INTERRUPT (ID match): " .. tostring(unit) .. " spellId=" .. cleanSpell .. "|r")
+        end
+        Cortio.HandleRemoteInterrupt(unit, castGUID, cleanSpell)
+        return
+    end
+
+    -- ================================================================
+    -- METHOD 3: Fallback — spell name comparison with pcall protection.
+    -- For spells not in ALL_INTERRUPTS by ID (unlikely but safe).
+    -- ================================================================
+    local nameOk, spellName = pcall(C_Spell.GetSpellName, spellID)
+    if not nameOk or not spellName then return end
+
+    for knownID, data in pairs(Cortio.Data.ALL_INTERRUPTS) do
+        local knOk, knName = pcall(C_Spell.GetSpellName, knownID)
+        if knOk and knName then
+            -- pcall the comparison: tainted == untainted may produce a "secret boolean"
+            local matchOk, isMatch = pcall(function() return spellName == knName end)
+            if matchOk and isMatch then
+                if _frameEventCount <= 10 then
+                    print("|cFF00FFFF[Cortio]|r |cFFFFFF00INTERRUPT (Name match): " .. tostring(unit) .. " " .. tostring(knName) .. " (id=" .. knownID .. ")|r")
                 end
+                Cortio.HandleRemoteInterrupt(unit, castGUID, knownID)
+                return
             end
         end
     end
 end)
+
+C_Timer.After(2, function() Cortio.RegisterPartyInterruptWatchers() end)
 
 -- Smart panel ticker: only runs when CDs are active
 Cortio.PanelTicker = nil
@@ -347,7 +575,6 @@ function Cortio.StartPanelTicker()
         end
         Cortio.UI:UpdateAllNameplates()
         
-        -- Auto-stop when no active CDs and no visible nameplates
         local hasWork = false
         local now = GetTime()
         for _, data in pairs(Cortio.RosterList) do
@@ -369,7 +596,6 @@ function Cortio.StartPanelTicker()
     end)
 end
 
--- Auto-start ticker when UpdatePanel detects active CDs
 hooksecurefunc(Cortio.UI, "UpdatePanel", function()
     local now = GetTime()
     for _, data in pairs(Cortio.RosterList) do
@@ -381,3 +607,4 @@ hooksecurefunc(Cortio.UI, "UpdatePanel", function()
 end)
 
 print("|cFF00FFFF[Cortio]|r Cargado. Asigna la tecla en: ESC -> Atajos -> AddOns -> Cortio")
+

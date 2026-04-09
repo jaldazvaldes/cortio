@@ -59,34 +59,21 @@ Cortio.Data.CLASS_INTERRUPT_ICONS = {
 }
 
 Cortio.Data.ALL_INTERRUPTS = {
-    -- WARRIOR
     [6552] = { cd = 15, class = "WARRIOR" },        -- Pummel
-    -- PALADIN
     [96231] = { cd = 15, class = "PALADIN" },       -- Rebuke
-    -- HUNTER
     [147362] = { cd = 24, class = "HUNTER" },       -- Counter Shot
     [187707] = { cd = 15, class = "HUNTER" },       -- Muzzle
-    -- ROGUE
     [1766] = { cd = 15, class = "ROGUE" },          -- Kick
-    -- PRIEST
     [15487] = { cd = 30, class = "PRIEST" },        -- Silence
-    -- DEATHKNIGHT
     [47528] = { cd = 15, class = "DEATHKNIGHT" },   -- Mind Freeze
-    -- SHAMAN
     [57994] = { cd = 12, class = "SHAMAN" },        -- Wind Shear
-    -- MAGE
     [2139] = { cd = 20, class = "MAGE" },           -- Counterspell
-    -- WARLOCK
     [19647] = { cd = 24, class = "WARLOCK" },       -- Spell Lock
     [119914]= { cd = 30, class = "WARLOCK" },       -- Axe Toss
-    -- MONK
     [116705]= { cd = 15, class = "MONK" },          -- Spear Hand Strike
-    -- DRUID
     [106839]= { cd = 15, class = "DRUID" },         -- Skull Bash
     [78675] = { cd = 60, class = "DRUID" },         -- Solar Beam
-    -- DEMONHUNTER
     [183752]= { cd = 15, class = "DEMONHUNTER" },   -- Disrupt
-    -- EVOKER
     [351338]= { cd = 20, class = "EVOKER" },        -- Quell
 }
 
@@ -116,6 +103,7 @@ for sid, data in pairs(Cortio.Data.ALL_INTERRUPTS) do
         Cortio.Data.INTERRUPT_NAME_TO_CLASS[sName] = data.class
     end
 end
+
 
 -- Spec-specific interrupt overrides (specId -> interrupt data)
 -- Only specs where the interrupt differs from the class default

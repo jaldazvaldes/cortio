@@ -789,9 +789,10 @@ SlashCmdList["CORTIO"] = function(msg)
         -- Roster
         print("  CortioRoster:")
         for k, v in pairs(Cortio.RosterList) do
-            print(string.format("    [%s] unit=%s class=%s spec=%s cdEnd=%.1f",
+            print(string.format("    [%s] unit=%s class=%s spec=%s specId=%s guid=%s cdEnd=%.1f",
                 tostring(k), tostring(v.unit), tostring(v.class),
-                tostring(v.specIcon), (v.cdEnd or 0) - GetTime()))
+                tostring(v.specIcon), tostring(v.specId or 0),
+                tostring(v.guid or "?"), (v.cdEnd or 0) - GetTime()))
         end
         
         -- Recent messages
@@ -806,8 +807,16 @@ SlashCmdList["CORTIO"] = function(msg)
         end
         
         print("|cFF00FFFF[Cortio]|r === FIN ===")
+    elseif cmd == "debugcl" then
+        if not CortioDB then CortioDB = {} end
+        CortioDB.debugCombatLog = not CortioDB.debugCombatLog
+        if CortioDB.debugCombatLog then
+            print("|cFF00FFFF[Cortio]|r Combat Log debug: |cFF44FF88ON|r (interrupt events will be printed)")
+        else
+            print("|cFF00FFFF[Cortio]|r Combat Log debug: |cFFFF4444OFF|r")
+        end
     else
-        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct errors | /ct clear")
+        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct debugcl | /ct errors | /ct clear")
         print("|cFF00FFFF[Cortio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end
