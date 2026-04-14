@@ -86,19 +86,22 @@ function Cortio.Marks:UpdateSecureBtnMacro()
     if InCombatLockdown() then return end
     local slot = Cortio.Marks:GetPlayerMarkerSlotSafe()
     local lines = {"/targetmarker " .. tostring(slot)}
-    if CortioDB and CortioDB.announce then
-        local sName = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or "?"
-        if #sName > 12 then sName = sName:sub(1, 12) end
-        local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
-        local txt = chatIcon .. " [Cortio] " .. sName .. " interrupts!"
-        
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-            table.insert(lines, "/i " .. txt)
-        elseif IsInRaid() then
-            table.insert(lines, "/ra " .. txt)
-        elseif IsInGroup() then
-            table.insert(lines, "/p " .. txt)
-        end
+    -- Always include the announce: when SendAddonMessage fails (result=11 in M+),
+    -- this is the ONLY way to sync markers. The CHAT_MSG parser on the other end
+    -- reads this message to update the marker UI.
+    local sName = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or "?"
+    if #sName > 12 then sName = sName:sub(1, 12) end
+    local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
+    
+    table.insert(lines, "/stopmacro [noexists]")
+    local txt = "[Cortio] Assigned " .. chatIcon .. " (" .. sName .. ")"
+    
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        table.insert(lines, "/i " .. txt)
+    elseif IsInRaid() then
+        table.insert(lines, "/ra " .. txt)
+    elseif IsInGroup() then
+        table.insert(lines, "/p " .. txt)
     end
     CortioMarkSABT:SetAttribute("macrotext", table.concat(lines, "\n"))
     CortioMarkSABT:SetAttribute("markerSlot", slot)

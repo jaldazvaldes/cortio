@@ -53,6 +53,8 @@ local function ProcessQueue()
         ok, result = pcall(C_ChatInfo.SendAddonMessage, job.prefix, job.msg, job.channel)
     end
 
+    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFAAAAAA[NET]|r SEND ch=" .. tostring(job.channel) .. " msg=" .. tostring(job.msg) .. " ok=" .. tostring(ok) .. " result=" .. tostring(result)) end
+
     Cortio.Net.Stats.lastResult = ok and result or ("ERROR: " .. tostring(result))
     Cortio.Net.Stats.lastResultTime = GetTime()
 
@@ -116,6 +118,7 @@ function Cortio.Net:SendGroupMessage(msg, tag)
     elseif IsInRaid() then ch = "RAID"
     elseif IsInGroup() then ch = "PARTY"
     end
+    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFAAAAAA[NET]|r QUEUE msg=" .. tostring(msg) .. " ch=" .. tostring(ch) .. " inGroup=" .. tostring(IsInGroup()) .. " inInst=" .. tostring(IsInGroup(LE_PARTY_CATEGORY_INSTANCE))) end
     if ch then
         table.insert(Cortio.Net.Queue, {
             prefix = Cortio.Data.COMM_PREFIX,
@@ -125,6 +128,8 @@ function Cortio.Net:SendGroupMessage(msg, tag)
             retries = 0,
         })
         Cortio.Net:EnsureTicker()
+    else
+        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF0000[NET] NO CHANNEL — not in group!|r") end
     end
 end
 

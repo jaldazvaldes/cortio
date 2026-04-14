@@ -241,6 +241,11 @@ function Cortio.UI:UpdatePanel()
         local sLeft = (data.cdEnd or 0) - now
         local isReady = sLeft <= 0
 
+        -- Clear lastResult when CD has fully expired (prevents stale "–" icon next to "READY")
+        if isReady and data.lastResult then
+            data.lastResult = nil
+        end
+
         -- Find assigned mark
         local assignedMark = nil
         local rShort = Cortio.Data:ShortName(rPlayerName)
@@ -815,8 +820,16 @@ SlashCmdList["CORTIO"] = function(msg)
         else
             print("|cFF00FFFF[Cortio]|r Combat Log debug: |cFFFF4444OFF|r")
         end
+    elseif cmd == "logs" then
+        if not CortioDB then CortioDB = {} end
+        CortioDB.debugLogs = not CortioDB.debugLogs
+        if CortioDB.debugLogs then
+            print("|cFF00FFFF[Cortio]|r Developer logs: |cFF44FF88ON|r")
+        else
+            print("|cFF00FFFF[Cortio]|r Developer logs: |cFFFF4444OFF|r")
+        end
     else
-        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct debugcl | /ct errors | /ct clear")
+        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct debugcl | /ct logs | /ct errors | /ct clear")
         print("|cFF00FFFF[Cortio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end
