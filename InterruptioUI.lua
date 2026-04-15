@@ -516,17 +516,13 @@ function Interruptio.UI:ReleaseNameplateFrame(unit)
                 uFrame._interruptioScaleBoosted = nil
                 uFrame._interruptioOrigScale = nil
             end
-            -- Restore reparenting (devolver UnitFrame a WorldFrame/np)
+            -- Restore reparenting (elevation) sin ser destructivos
             if uFrame._interruptioReparented then
                 pcall(function()
-                    uFrame:SetParent(uFrame._interruptioOrigParent or np)
-                    uFrame:SetFrameStrata(uFrame._interruptioOrigStrata or "BACKGROUND")
-                    uFrame:SetFrameLevel(uFrame._interruptioOrigLevel or 1)
-                    uFrame:ClearAllPoints()
-                    uFrame:SetAllPoints(uFrame._interruptioOrigParent or np)
+                    if uFrame._interruptioOrigStrata then uFrame:SetFrameStrata(uFrame._interruptioOrigStrata) end
+                    if uFrame._interruptioOrigLevel then uFrame:SetFrameLevel(uFrame._interruptioOrigLevel) end
                 end)
                 uFrame._interruptioReparented = nil
-                uFrame._interruptioOrigParent = nil
                 uFrame._interruptioOrigStrata = nil
                 uFrame._interruptioOrigLevel = nil
             end
@@ -655,45 +651,31 @@ function Interruptio.UI:UpdateNameplate(unit)
         end
         
         -- ============================================================
-        -- Bring to Front: Plater-style reparenting
-        -- WorldFrame ordena nameplates por profundidad 3D, NO por strata.
-        -- La ÚNICA forma de superar esto es sacar el UnitFrame de WorldFrame
-        -- y reparentarlo a UIParent, donde sí funciona el sistema de strata.
+        -- Bring to Front: Safe Strata Elevation
         -- ============================================================
         local bringToFront = (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront
         if isMyMark and bringToFront then
             if not uiFrame._interruptioReparented then
-                -- Guardar estado original
+                -- Guardar strata y level originales sin arrancar la barra de su padre
                 pcall(function()
-                    uiFrame._interruptioOrigParent = uiFrame:GetParent()
                     uiFrame._interruptioOrigStrata = uiFrame:GetFrameStrata()
                     uiFrame._interruptioOrigLevel = uiFrame:GetFrameLevel()
                 end)
-                -- Reparentar a UIParent para salir de WorldFrame
+                -- Elevar
                 pcall(function()
-                    uiFrame:SetParent(UIParent)
                     uiFrame:SetFrameStrata("TOOLTIP")
                     uiFrame:SetFrameLevel(9000)
                 end)
                 uiFrame._interruptioReparented = true
             end
-            -- Re-anclar a np cada tick (np se mueve con el mob en 3D)
-            pcall(function()
-                uiFrame:ClearAllPoints()
-                uiFrame:SetAllPoints(np)
-            end)
         else
-            -- Restaurar: devolver el UnitFrame a su padre original (np)
+            -- Restaurar strata y level originales
             if uiFrame._interruptioReparented then
                 pcall(function()
-                    uiFrame:SetParent(uiFrame._interruptioOrigParent or np)
-                    uiFrame:SetFrameStrata(uiFrame._interruptioOrigStrata or "BACKGROUND")
-                    uiFrame:SetFrameLevel(uiFrame._interruptioOrigLevel or 1)
-                    uiFrame:ClearAllPoints()
-                    uiFrame:SetAllPoints(uiFrame._interruptioOrigParent or np)
+                    if uiFrame._interruptioOrigStrata then uiFrame:SetFrameStrata(uiFrame._interruptioOrigStrata) end
+                    if uiFrame._interruptioOrigLevel then uiFrame:SetFrameLevel(uiFrame._interruptioOrigLevel) end
                 end)
                 uiFrame._interruptioReparented = nil
-                uiFrame._interruptioOrigParent = nil
                 uiFrame._interruptioOrigStrata = nil
                 uiFrame._interruptioOrigLevel = nil
             end
