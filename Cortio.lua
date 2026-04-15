@@ -244,7 +244,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                 C_Timer.After(0.5 + math.random() * 1.5, function() Cortio.Marks:BroadcastCurrentMark() end)
             elseif action == "CD" then
                 local cdDuration = tonumber(p2)
-                print("|cFF00FFFF[Cortio]|r |cFFFFFF00CD RECEIVED|r from=" .. tostring(rPlayer) .. " dur=" .. tostring(cdDuration) .. " inRoster=" .. tostring(Cortio.RosterList[rPlayer] ~= nil))
+                if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFFFF00CD RECEIVED|r from=" .. tostring(rPlayer) .. " dur=" .. tostring(cdDuration) .. " inRoster=" .. tostring(Cortio.RosterList[rPlayer] ~= nil)) end
                 if cdDuration and cdDuration > 0 then
                     Cortio.Data:SafeCall("Remote_CD", function()
                         local now = GetTime()
@@ -257,9 +257,9 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                         if Cortio.RosterList[rPlayer] then
                             Cortio.RosterList[rPlayer].cdEnd = now + cdDuration
                             Cortio.RosterList[rPlayer].cdTotal = cdDuration
-                            print("|cFF00FFFF[Cortio]|r |cFF00FF00CD SET|r " .. rPlayer .. " cdEnd=" .. string.format("%.1f", now + cdDuration) .. " total=" .. cdDuration)
+                            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00CD SET|r " .. rPlayer .. " cdEnd=" .. string.format("%.1f", now + cdDuration) .. " total=" .. cdDuration) end
                         else
-                            print("|cFF00FFFF[Cortio]|r |cFFFF0000CD FAIL|r player '" .. rPlayer .. "' NOT in RosterList")
+                            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF0000CD FAIL|r player '" .. rPlayer .. "' NOT in RosterList") end
                         end
                         Cortio.UI:UpdatePanel()
                         Cortio.StartPanelTicker()
@@ -361,7 +361,7 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     local slot = tonumber(slotStr)
     if not slot or slot <= 0 then return end
     
-    print("|cFF00FFFF[Cortio]|r |cFFFF88FF[CHAT SYNC]|r Received mark: {rt" .. slot .. "} → " .. playerName)
+    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF88FF[CHAT SYNC]|r Received mark: {rt" .. slot .. "} → " .. playerName) end
     
     -- Don't skip own messages — we need self-consistency.
     -- But DO skip if we already processed this mark locally.
@@ -389,7 +389,7 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     end
     
     if not rPlayer then
-        print("|cFF00FFFF[Cortio]|r |cFFFF8800[CHAT SYNC]|r Player '" .. playerName .. "' not in roster")
+        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF8800[CHAT SYNC]|r Player '" .. playerName .. "' not in roster") end
         return
     end
     
@@ -429,7 +429,7 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     
     Cortio.UI:UpdatePanel()
     Cortio.UI:UpdateAllNameplates()
-    print("|cFF00FFFF[Cortio]|r |cFF00FF00[CHAT SYNC]|r ✓ Assigned {rt" .. slot .. "} to " .. rPlayer)
+    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00[CHAT SYNC]|r ✓ Assigned {rt" .. slot .. "} to " .. rPlayer) end
 end)
 
 -- ============================================================
@@ -456,8 +456,6 @@ local CORRELATE_INTERVAL = 0.04    -- min seconds between correlations
 local MATCH_WINDOW       = 0.055   -- cast ↔ interrupt match window
 local AURA_SUPPRESS      = 0.028   -- aura within this window suppresses interrupt
 
--- Recent casts: tracks the last known interrupt cast per player for correlation
-local recentCasts = {}  -- name → { t = GetTime(), spellID = number }
 
 local function PushSignal(kind, unit)
     signalSeq = signalSeq + 1
@@ -523,7 +521,7 @@ local function TriggerPartyCooldown(unit, memberName)
                 specIcon = "0", specId = 0, cdEnd = 0, cdTotal = 0, lastResult = nil,
             }
             matchedPlayer = memberName
-            print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL|r Auto-registered: " .. memberName .. " class=" .. engClass)
+            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL|r Auto-registered: " .. memberName .. " class=" .. engClass) end
         end
     end
 
@@ -545,8 +543,7 @@ local function TriggerPartyCooldown(unit, memberName)
     rosterData.cdTotal = cdTotal
     rosterData.lastResult = "USED"
 
-    print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL MATCH|r " .. matchedPlayer
-        .. " interrupted! cd=" .. cdTotal .. "s")
+    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL MATCH|r " .. matchedPlayer .. " interrupted! cd=" .. cdTotal .. "s") end
 
     if Cortio.UI then Cortio.UI:UpdatePanel() end
     Cortio.StartPanelTicker()
@@ -628,10 +625,7 @@ local function CorrelateSignals()
             TriggerPartyCooldown(ownerUnit, memberName)
         end
 
-        print("|cFF00FFFF[Cortio]|r |cFF88FFAA[CORR]|r matched cast(" 
-            .. tostring(bestCast.unit) .. ") ↔ interrupt(" 
-            .. tostring(freshest.unit) .. ") Δ=" 
-            .. string.format("%.3f", bestDiff) .. "s")
+        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF88FFAA[CORR]|r matched cast(" .. tostring(bestCast.unit) .. ") ↔ interrupt(" .. tostring(freshest.unit) .. ") Δ=" .. string.format("%.3f", bestDiff) .. "s") end
     end
 
     needsCorrelation = false
@@ -678,7 +672,6 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                 local spellName = Cortio.Taint:SafeResolveSpell(spellID)
                 if spellName and Cortio.Data.INTERRUPT_NAME_TO_CD[spellName] then
                     -- Push signal for correlation (confirms success if nameplate fires too)
-                    recentCasts["__player"] = { t = GetTime(), spellID = 0 }
                     PushSignal("cast", "player")
                     
                     -- DIRECT CD update (like BliZzi's OnOwnKick)
@@ -703,7 +696,7 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                     -- Broadcast to party
                     Cortio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
                     
-                    print("|cFF00FFFF[Cortio]|r |cFF00FF00OWN KICK|r " .. spellName .. " cd=" .. cdDur .. "s")
+                    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00OWN KICK|r " .. spellName .. " cd=" .. cdDur .. "s") end
                 end
             end
             return
@@ -723,10 +716,7 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         end
 
         if spellName and Cortio.Data.INTERRUPT_NAME_TO_CD[spellName] then
-            -- Clean spell name resolved! Record as a known interrupt cast.
-            local cls = Cortio.Data.INTERRUPT_NAME_TO_CLASS[spellName]
-            local sid = Cortio.Data.CLASS_INTERRUPT_SPELLID[cls] or 0
-            recentCasts[memberName] = { t = GetTime(), spellID = sid }
+            -- Clean spell name resolved → push signal for correlation
             PushSignal("cast", unit)
         else
             -- Spell name is tainted or not an interrupt.
@@ -746,7 +736,6 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                     if not isOnCD then
                         local sid = Cortio.Data.CLASS_INTERRUPT_SPELLID[rosterData.class]
                         if sid then
-                            recentCasts[memberName] = { t = GetTime(), spellID = sid }
                             PushSignal("cast", unit)
                         end
                     end
@@ -848,17 +837,8 @@ C_Timer.After(3, function()
     end)
 end)
 
--- ============================================================
--- PARTY WATCHER SETUP (backward-compat stub)
--- Signal Correlation uses _interruptFrame which listens globally
--- for UNIT_SPELLCAST_SUCCEEDED, UNIT_SPELLCAST_INTERRUPTED, UNIT_AURA.
--- No per-unit registration needed — this function is a no-op.
--- ============================================================
-function Cortio.RegisterPartyInterruptWatchers()
-    if Cortio._partyFrame2 then Cortio._partyFrame2:UnregisterAllEvents() end
-end
-
-C_Timer.After(2, function() Cortio.RegisterPartyInterruptWatchers() end)
+-- RegisterPartyInterruptWatchers: no-op (Signal Correlation handles everything)
+function Cortio.RegisterPartyInterruptWatchers() end
 
 
 -- Smart panel ticker: only runs when CDs are active

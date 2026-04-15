@@ -516,16 +516,19 @@ function Cortio.UI:ReleaseNameplateFrame(unit)
                 uFrame._cortioScaleBoosted = nil
                 uFrame._cortioOrigScale = nil
             end
-            -- Restore strata+level de cada sub-frame (Plater-style)
-            if uFrame._cortioStrataBoosted and uFrame._cortioOrigFrames then
-                for _, fr in ipairs(uFrame._cortioOrigFrames) do
-                    pcall(function()
-                        fr:SetFrameStrata(fr._cortioOrigStrata or "BACKGROUND")
-                        fr:SetFrameLevel(fr._cortioOrigLevel or 1)
-                    end)
-                end
-                uFrame._cortioOrigFrames = nil
-                uFrame._cortioStrataBoosted = nil
+            -- Restore reparenting (devolver UnitFrame a WorldFrame/np)
+            if uFrame._cortioReparented then
+                pcall(function()
+                    uFrame:SetParent(uFrame._cortioOrigParent or np)
+                    uFrame:SetFrameStrata(uFrame._cortioOrigStrata or "BACKGROUND")
+                    uFrame:SetFrameLevel(uFrame._cortioOrigLevel or 1)
+                    uFrame:ClearAllPoints()
+                    uFrame:SetAllPoints(uFrame._cortioOrigParent or np)
+                end)
+                uFrame._cortioReparented = nil
+                uFrame._cortioOrigParent = nil
+                uFrame._cortioOrigStrata = nil
+                uFrame._cortioOrigLevel = nil
             end
         end
         f:Hide()
@@ -629,8 +632,8 @@ function Cortio.UI:UpdateNameplate(unit)
     local scaleBoost = (CortioDB and CortioDB.nameplateScaleBoost) or 1.15
     
     if np then
-        -- Scale boost: escalar directamente el UnitFrame de la nameplate
-        if showGlow and scaleBoost ~= 1.0 then
+        -- Scale boost: solo para el mob que TÚ tienes marcado (isMyMark)
+        if isMyMark and showGlow and scaleBoost ~= 1.0 then
             if not uiFrame._cortioOrigScale then
                 pcall(function() uiFrame._cortioOrigScale = uiFrame:GetScale() end)
             end
@@ -643,6 +646,7 @@ function Cortio.UI:UpdateNameplate(unit)
             end)
             uiFrame._cortioScaleBoosted = true
         else
+            -- Restaurar escala si ya no es tu marca o se desactiva
             if uiFrame._cortioScaleBoosted then
                 pcall(function() uiFrame:SetScale(uiFrame._cortioOrigScale or 1) end)
                 uiFrame._cortioScaleBoosted = nil
@@ -650,71 +654,48 @@ function Cortio.UI:UpdateNameplate(unit)
             end
         end
         
-        -- Raise FrameStrata + FrameLevel al estilo Plater:
-        -- Se cambia strata y nivel de CADA sub-frame individual
-        -- (healthBar, castBar, nombre, etc.) porque los hijos no heredan strata del padre
+        -- ============================================================
+        -- Bring to Front: Plater-style reparenting
+        -- WorldFrame ordena nameplates por profundidad 3D, NO por strata.
+        -- La ÚNICA forma de superar esto es sacar el UnitFrame de WorldFrame
+        -- y reparentarlo a UIParent, donde sí funciona el sistema de strata.
+        -- ============================================================
         local bringToFront = (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront
         if isMyMark and bringToFront then
-            -- Recopilar todos los sub-frames que debemos subir
-            if not uiFrame._cortioStrataBoosted then
-                uiFrame._cortioOrigFrames = {}
-                -- Guardar strata+level originales de np, uiFrame y todos sus hijos
-                -- np es el contenedor WorldFrame - subirlo es clave para la profundidad visual
-                local frames = { np, uiFrame }
-                -- Añadir sub-frames conocidos de barras nativas de WoW
-                if uiFrame.healthBar then frames[#frames+1] = uiFrame.healthBar end
-                if uiFrame.HealthBarsContainer then frames[#frames+1] = uiFrame.HealthBarsContainer end
-                if uiFrame.castBar then frames[#frames+1] = uiFrame.castBar end
-                if uiFrame.CastBar then frames[#frames+1] = uiFrame.CastBar end
-                if uiFrame.BuffFrame then frames[#frames+1] = uiFrame.BuffFrame end
-                if uiFrame.selectionHighlight then frames[#frames+1] = uiFrame.selectionHighlight end
-                if uiFrame.aggroHighlight then frames[#frames+1] = uiFrame.aggroHighlight end
-                if uiFrame.ClassificationFrame then frames[#frames+1] = uiFrame.ClassificationFrame end
-                if uiFrame.RaidTargetFrame then frames[#frames+1] = uiFrame.RaidTargetFrame end
-                -- Enumerar TODOS los hijos de np y uiFrame
-                for _, parentFrame in ipairs({ np, uiFrame }) do
-                    pcall(function()
-                        local children = { parentFrame:GetChildren() }
-                        for _, child in ipairs(children) do
-                            if child and child.GetFrameStrata then
-                                local found = false
-                                for _, f2 in ipairs(frames) do if f2 == child then found = true break end end
-                                if not found then frames[#frames+1] = child end
-                            end
-                        end
-                    end)
-                end
-                
-                for _, fr in ipairs(frames) do
-                    pcall(function()
-                        fr._cortioOrigStrata = fr:GetFrameStrata()
-                        fr._cortioOrigLevel = fr:GetFrameLevel()
-                    end)
-                end
-                uiFrame._cortioOrigFrames = frames
-                uiFrame._cortioStrataBoosted = true
+            if not uiFrame._cortioReparented then
+                -- Guardar estado original
+                pcall(function()
+                    uiFrame._cortioOrigParent = uiFrame:GetParent()
+                    uiFrame._cortioOrigStrata = uiFrame:GetFrameStrata()
+                    uiFrame._cortioOrigLevel = uiFrame:GetFrameLevel()
+                end)
+                -- Reparentar a UIParent para salir de WorldFrame
+                pcall(function()
+                    uiFrame:SetParent(UIParent)
+                    uiFrame:SetFrameStrata("TOOLTIP")
+                    uiFrame:SetFrameLevel(9000)
+                end)
+                uiFrame._cortioReparented = true
             end
-            
-            -- Re-imponer en cada tick (Plater style: strata DIALOG + level 5000+)
+            -- Re-anclar a np cada tick (np se mueve con el mob en 3D)
             pcall(function()
-                for _, fr in ipairs(uiFrame._cortioOrigFrames) do
-                    pcall(function()
-                        fr:SetFrameStrata("DIALOG")
-                        local origLvl = fr._cortioOrigLevel or 1
-                        fr:SetFrameLevel(origLvl + 5000)
-                    end)
-                end
+                uiFrame:ClearAllPoints()
+                uiFrame:SetAllPoints(np)
             end)
         else
-            if uiFrame._cortioStrataBoosted and uiFrame._cortioOrigFrames then
-                for _, fr in ipairs(uiFrame._cortioOrigFrames) do
-                    pcall(function()
-                        fr:SetFrameStrata(fr._cortioOrigStrata or "BACKGROUND")
-                        fr:SetFrameLevel(fr._cortioOrigLevel or 1)
-                    end)
-                end
-                uiFrame._cortioOrigFrames = nil
-                uiFrame._cortioStrataBoosted = nil
+            -- Restaurar: devolver el UnitFrame a su padre original (np)
+            if uiFrame._cortioReparented then
+                pcall(function()
+                    uiFrame:SetParent(uiFrame._cortioOrigParent or np)
+                    uiFrame:SetFrameStrata(uiFrame._cortioOrigStrata or "BACKGROUND")
+                    uiFrame:SetFrameLevel(uiFrame._cortioOrigLevel or 1)
+                    uiFrame:ClearAllPoints()
+                    uiFrame:SetAllPoints(uiFrame._cortioOrigParent or np)
+                end)
+                uiFrame._cortioReparented = nil
+                uiFrame._cortioOrigParent = nil
+                uiFrame._cortioOrigStrata = nil
+                uiFrame._cortioOrigLevel = nil
             end
         end
     end
