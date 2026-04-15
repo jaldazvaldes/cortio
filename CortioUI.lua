@@ -259,12 +259,14 @@ function Cortio.UI:UpdatePanel()
         totalCount = totalCount + 1
         if isReady then readyCount = readyCount + 1 end
 
+        local staticSlot = Cortio.Marks:GetMarkerSlotForPlayer(rPlayerName)
+        
         table.insert(entries, {
             playerName = rPlayerName,
             class = rClass,
             specId = data.specId or 0,
             mark = assignedMark,
-            markerSlot = assignedMark and assignedMark.markerSlot or 0,
+            markerSlot = staticSlot,
             cdEnd = data.cdEnd or 0,
             cdTotal = data.cdTotal or 15,
             remaining = isReady and 0 or sLeft,
@@ -423,8 +425,26 @@ function Cortio.UI:UpdatePanel()
 end
 
 -- ============================================================
--- Nameplates (unchanged)
+-- Nameplates
 -- ============================================================
+
+-- Pick which mark "owns" the glow (color/animation) when multiple
+-- marks exist on the same nameplate. Prefer local player's mark;
+-- if none, pick the lowest markerSlot (= highest raid priority).
+local function PickPrimaryMark(marks)
+    if not marks or #marks == 0 then return nil end
+    for _, m in ipairs(marks) do
+        if m.isLocal then return m end
+    end
+    -- Stable fallback: lowest markerSlot
+    local best = marks[1]
+    for i = 2, #marks do
+        if (marks[i].markerSlot or 99) < (best.markerSlot or 99) then
+            best = marks[i]
+        end
+    end
+    return best
+end
 local function CreateIconSubFrame(parent, index)
     local icon = CreateFrame("Frame", nil, parent)
     icon:SetSize(24, 24)
@@ -486,11 +506,27 @@ function Cortio.UI:ReleaseNameplateFrame(unit)
             f.glow:Hide()
             if f.glowAG then f.glowAG:Stop() end
         end
-        -- Restore nameplate scale
+        -- Restore nameplate strata, level and scale
         local np = C_NamePlate.GetNamePlateForUnit(unit)
-        if np and np._cortioScaled then
-            np:SetScale(np._cortioOrigScale or 1)
-            np._cortioScaled = false
+        if np then
+            local uFrame = np.UnitFrame or np
+            -- Restore scale
+            if uFrame._cortioScaleBoosted then
+                pcall(function() uFrame:SetScale(uFrame._cortioOrigScale or 1) end)
+                uFrame._cortioScaleBoosted = nil
+                uFrame._cortioOrigScale = nil
+            end
+            -- Restore strata+level de cada sub-frame (Plater-style)
+            if uFrame._cortioStrataBoosted and uFrame._cortioOrigFrames then
+                for _, fr in ipairs(uFrame._cortioOrigFrames) do
+                    pcall(function()
+                        fr:SetFrameStrata(fr._cortioOrigStrata or "BACKGROUND")
+                        fr:SetFrameLevel(fr._cortioOrigLevel or 1)
+                    end)
+                end
+                uFrame._cortioOrigFrames = nil
+                uFrame._cortioStrataBoosted = nil
+            end
         end
         f:Hide()
         f:ClearAllPoints()
@@ -502,12 +538,35 @@ end
 function Cortio.UI:UpdateNameplate(unit)
     local marks = {}
 
+    -- Read raid marker on this nameplate (taint-safe)
+    local raidIndex = nil
+    if UnitExists(unit) then
+        local okRT, idx = pcall(GetRaidTargetIndex, unit)
+        -- Extra security: drop it immediately if it's flagged as secret by the client
+        if okRT and idx and not Cortio.Taint:IsSecret(idx) then
+            raidIndex = idx 
+        end
+    end
+
     for _, mark in ipairs(Cortio.Marks.Active) do
         local isMatch = false
         
+        -- 1) Cached from a previous frame
         if mark.nameplateUnit == unit then
             isMatch = true
-        elseif not mark.nameplateUnit and mark.unitToken then
+        end
+
+        -- 2) Match by raid marker index (stable, works for remote marks)
+        -- We wrap in pcall because comparing a tainted number throws a hard Lua error in 12.0
+        if not isMatch and raidIndex and mark.markerSlot and mark.markerSlot > 0 then
+            local okCmp, isEq = pcall(function() return raidIndex == mark.markerSlot end)
+            if okCmp and isEq then
+                isMatch = true
+            end
+        end
+
+        -- 3) Fallback: local UnitIsUnit("target", nameplateX)
+        if not isMatch and not mark.nameplateUnit and mark.unitToken then
             if mark.unitToken == "target" and UnitExists("target") then
                 if Cortio.Taint:SafeIsMatch("target", unit) then
                     isMatch = true
@@ -520,6 +579,7 @@ function Cortio.UI:UpdateNameplate(unit)
 
         if isMatch then
             mark.nameplateUnit = unit
+            mark.isLocal = (mark.playerName == Cortio.PlayerName)
             table.insert(marks, mark)
         elseif mark.nameplateUnit == unit then
             mark.nameplateUnit = nil
@@ -539,7 +599,9 @@ function Cortio.UI:UpdateNameplate(unit)
         return 
     end
     
-    local anchorFrame = np.UnitFrame or np
+    -- Try to find the actual health bar for the glow
+    local uiFrame = np.UnitFrame or np
+    local barFrame = uiFrame.healthBar or uiFrame.HealthBar or uiFrame.Health or uiFrame.healthbar or uiFrame
 
     if not f then
         f = GetNameplateFrame()
@@ -548,23 +610,112 @@ function Cortio.UI:UpdateNameplate(unit)
     
     if f:GetParent() ~= UIParent then f:SetParent(UIParent) end
     f:ClearAllPoints()
-    -- Read icon position from settings: 1 = Left (default), 2 = Right
+    
+    -- Anclar iconos a la barra de vida con offset configurable por el usuario
     local iconSide = (CortioDB and CortioDB.iconSide) or 1
+    local iconOffset = (CortioDB and CortioDB.iconOffset) or 0
     if iconSide == 2 then
-        f:SetPoint("LEFT", anchorFrame, "RIGHT", 6, 0)
+        f:SetPoint("LEFT", barFrame, "RIGHT", iconOffset, 0)
     else
-        f:SetPoint("RIGHT", anchorFrame, "LEFT", -6, 0)
+        f:SetPoint("RIGHT", barFrame, "LEFT", -iconOffset, 0)
     end
     f:Show()
     
-    -- === NAMEPLATE BOOST: scale up + vertical offset to separate from pull ===
+    local glowMark = PickPrimaryMark(marks)
+    local isMyMark = glowMark and glowMark.isLocal
+
+    -- === NAMEPLATE BOOST: scale + strata ===
     local showGlow = (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow
-    local np = C_NamePlate.GetNamePlateForUnit(unit)
-    if np and showGlow then
-        if not np._cortioScaled then
-            np._cortioOrigScale = np:GetScale()
-            np:SetScale((np._cortioOrigScale or 1) * 1.15)
-            np._cortioScaled = true
+    local scaleBoost = (CortioDB and CortioDB.nameplateScaleBoost) or 1.15
+    
+    if np then
+        -- Scale boost: escalar directamente el UnitFrame de la nameplate
+        if showGlow and scaleBoost ~= 1.0 then
+            if not uiFrame._cortioOrigScale then
+                pcall(function() uiFrame._cortioOrigScale = uiFrame:GetScale() end)
+            end
+            local desiredScale = (uiFrame._cortioOrigScale or 1) * scaleBoost
+            pcall(function()
+                local currentScale = uiFrame:GetScale()
+                if math.abs(currentScale - desiredScale) > 0.01 then
+                    uiFrame:SetScale(desiredScale)
+                end
+            end)
+            uiFrame._cortioScaleBoosted = true
+        else
+            if uiFrame._cortioScaleBoosted then
+                pcall(function() uiFrame:SetScale(uiFrame._cortioOrigScale or 1) end)
+                uiFrame._cortioScaleBoosted = nil
+                uiFrame._cortioOrigScale = nil
+            end
+        end
+        
+        -- Raise FrameStrata + FrameLevel al estilo Plater:
+        -- Se cambia strata y nivel de CADA sub-frame individual
+        -- (healthBar, castBar, nombre, etc.) porque los hijos no heredan strata del padre
+        local bringToFront = (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront
+        if isMyMark and bringToFront then
+            -- Recopilar todos los sub-frames que debemos subir
+            if not uiFrame._cortioStrataBoosted then
+                uiFrame._cortioOrigFrames = {}
+                -- Guardar strata+level originales de np, uiFrame y todos sus hijos
+                -- np es el contenedor WorldFrame - subirlo es clave para la profundidad visual
+                local frames = { np, uiFrame }
+                -- Añadir sub-frames conocidos de barras nativas de WoW
+                if uiFrame.healthBar then frames[#frames+1] = uiFrame.healthBar end
+                if uiFrame.HealthBarsContainer then frames[#frames+1] = uiFrame.HealthBarsContainer end
+                if uiFrame.castBar then frames[#frames+1] = uiFrame.castBar end
+                if uiFrame.CastBar then frames[#frames+1] = uiFrame.CastBar end
+                if uiFrame.BuffFrame then frames[#frames+1] = uiFrame.BuffFrame end
+                if uiFrame.selectionHighlight then frames[#frames+1] = uiFrame.selectionHighlight end
+                if uiFrame.aggroHighlight then frames[#frames+1] = uiFrame.aggroHighlight end
+                if uiFrame.ClassificationFrame then frames[#frames+1] = uiFrame.ClassificationFrame end
+                if uiFrame.RaidTargetFrame then frames[#frames+1] = uiFrame.RaidTargetFrame end
+                -- Enumerar TODOS los hijos de np y uiFrame
+                for _, parentFrame in ipairs({ np, uiFrame }) do
+                    pcall(function()
+                        local children = { parentFrame:GetChildren() }
+                        for _, child in ipairs(children) do
+                            if child and child.GetFrameStrata then
+                                local found = false
+                                for _, f2 in ipairs(frames) do if f2 == child then found = true break end end
+                                if not found then frames[#frames+1] = child end
+                            end
+                        end
+                    end)
+                end
+                
+                for _, fr in ipairs(frames) do
+                    pcall(function()
+                        fr._cortioOrigStrata = fr:GetFrameStrata()
+                        fr._cortioOrigLevel = fr:GetFrameLevel()
+                    end)
+                end
+                uiFrame._cortioOrigFrames = frames
+                uiFrame._cortioStrataBoosted = true
+            end
+            
+            -- Re-imponer en cada tick (Plater style: strata DIALOG + level 5000+)
+            pcall(function()
+                for _, fr in ipairs(uiFrame._cortioOrigFrames) do
+                    pcall(function()
+                        fr:SetFrameStrata("DIALOG")
+                        local origLvl = fr._cortioOrigLevel or 1
+                        fr:SetFrameLevel(origLvl + 5000)
+                    end)
+                end
+            end)
+        else
+            if uiFrame._cortioStrataBoosted and uiFrame._cortioOrigFrames then
+                for _, fr in ipairs(uiFrame._cortioOrigFrames) do
+                    pcall(function()
+                        fr:SetFrameStrata(fr._cortioOrigStrata or "BACKGROUND")
+                        fr:SetFrameLevel(fr._cortioOrigLevel or 1)
+                    end)
+                end
+                uiFrame._cortioOrigFrames = nil
+                uiFrame._cortioStrataBoosted = nil
+            end
         end
     end
     
@@ -576,59 +727,71 @@ function Cortio.UI:UpdateNameplate(unit)
             f.glow:SetFrameStrata("BACKGROUND")
             f.glow:SetFrameLevel(0)
             
-            -- Layer 1: outermost soft glow (largest, most transparent)
+            -- Layer 1: outermost soft glow (solid texture)
             f.glowOuter = f.glow:CreateTexture(nil, "BACKGROUND", nil, -2)
             f.glowOuter:SetTexture("Interface\\Buttons\\WHITE8x8")
             
-            -- Layer 2: middle glow
+            -- Layer 2: middle glow (solid texture)
             f.glowMid = f.glow:CreateTexture(nil, "BACKGROUND", nil, -1)
             f.glowMid:SetTexture("Interface\\Buttons\\WHITE8x8")
             
-            -- Layer 3: inner bright border (thinnest, brightest)
+            -- Layer 3: inner bright border
             f.glowInner = CreateFrame("Frame", nil, f.glow, "BackdropTemplate")
-            f.glowInner:SetBackdrop({
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = 2,
-            })
+            f.glowInner:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
             
             -- Pulse animation: breathing effect
             f.glowAG = f.glow:CreateAnimationGroup()
             f.glowAG:SetLooping("BOUNCE")
             local pulse = f.glowAG:CreateAnimation("Alpha")
-            pulse:SetFromAlpha(0.45)
+            pulse:SetFromAlpha(0.35)
             pulse:SetToAlpha(1.0)
-            pulse:SetDuration(0.9)
+            pulse:SetDuration(0.8)
             pulse:SetSmoothing("IN_OUT")
             f.glowAG:Play()
         end
         
-        -- Position all glow layers around the nameplate
+        -- Levantar el brillo por encima del fondo con cuidado para evitar errores de Lua
+        local strata = "LOW"
+        local lvl = 1
+        pcall(function() strata = uiFrame:GetFrameStrata() or "LOW" end)
+        pcall(function() lvl = (uiFrame:GetFrameLevel() or 1) + 4 end)
+        
+        -- Si el Bring to Front está activado, blindamos el brillo a capa DIALOG independientemente de la placa
+        local bringToFront = (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront
+        if isMyMark and bringToFront then 
+            strata = "DIALOG" 
+        end
+        
+        f.glow:SetFrameStrata(strata)
+        f.glow:SetFrameLevel(lvl)
+
+        -- Expandir el brillo para generar el marco translúcido de fondo (estilo original)
         f.glow:ClearAllPoints()
-        f.glow:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -10, 10)
-        f.glow:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 10, -10)
+        f.glow:SetPoint("TOPLEFT", barFrame, "TOPLEFT", -8, 8)
+        f.glow:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 8, -8)
         f.glow:Show()
         
         f.glowOuter:ClearAllPoints()
-        f.glowOuter:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -8, 8)
-        f.glowOuter:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 8, -8)
+        f.glowOuter:SetPoint("TOPLEFT", barFrame, "TOPLEFT", -6, 6)
+        f.glowOuter:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 6, -6)
         
         f.glowMid:ClearAllPoints()
-        f.glowMid:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -4, 4)
-        f.glowMid:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 4, -4)
+        f.glowMid:SetPoint("TOPLEFT", barFrame, "TOPLEFT", -3, 3)
+        f.glowMid:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 3, -3)
         
         f.glowInner:ClearAllPoints()
-        f.glowInner:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -1, 1)
-        f.glowInner:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 1, -1)
+        f.glowInner:SetPoint("TOPLEFT", barFrame, "TOPLEFT", -1, 1)
+        f.glowInner:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 1, -1)
         
         -- Color by class
-        local glowMark = marks[1]
         if glowMark then
             local colorHex = Cortio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
             local gR = tonumber(colorHex:sub(3, 4), 16) / 255
             local gG = tonumber(colorHex:sub(5, 6), 16) / 255
             local gB = tonumber(colorHex:sub(7, 8), 16) / 255
-            f.glowOuter:SetColorTexture(gR, gG, gB, 0.10)
-            f.glowMid:SetColorTexture(gR, gG, gB, 0.22)
+            
+            f.glowOuter:SetColorTexture(gR, gG, gB, 0.15)
+            f.glowMid:SetColorTexture(gR, gG, gB, 0.3)
             f.glowInner:SetBackdropBorderColor(gR, gG, gB, 0.95)
         end
         
@@ -822,6 +985,35 @@ function Cortio.UI:CreateSettingsMenu()
     )
     Settings.CreateCheckbox(category, glowSetting, "Muestra un borde brillante alrededor de la nameplate del mob asignado para cortarte.")
     
+    -- Bring to Front Option
+    local frontSetting = Settings.RegisterProxySetting(
+        category, "Cortio_BringToFront", Settings.VarType.Boolean, "Traer barra al Frente (Top Layer)",
+        (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront,
+        function() return (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.bringToFront = val
+            Cortio.UI:UpdateAllNameplates()
+        end
+    )
+    Settings.CreateCheckbox(category, frontSetting, "Fuerza a la barra de vida de tu objetivo asignado a renderizarse por encima del resto (FrameStrata: DIALOG) cuando tienes la patada asignada.")
+    
+    -- Nameplate Scale Boost
+    local npScaleSetting = Settings.RegisterProxySetting(
+        category, "Cortio_NPScale", Settings.VarType.Number, "Tamaño de la Barra del Objetivo",
+        (CortioDB and CortioDB.nameplateScaleBoost) or 1.15,
+        function() return (CortioDB and CortioDB.nameplateScaleBoost) or 1.15 end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.nameplateScaleBoost = val
+            Cortio.UI:UpdateAllNameplates()
+        end
+    )
+    local npScaleOpts = Settings.CreateSliderOptions(0.8, 2.0, 0.05)
+    npScaleOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return string.format("%.2fx", v) end)
+    Settings.CreateSlider(category, npScaleSetting, npScaleOpts, "Escala de la barra de vida del mob asignado.")
+    
+    -- ============================================================
     -- Icon Position (LEFT / RIGHT of nameplate)
     local iconSideSetting = Settings.RegisterProxySetting(
         category, "Cortio_IconSide", Settings.VarType.Number, "Lado de los iconos de corte",
@@ -838,6 +1030,21 @@ function Cortio.UI:CreateSettingsMenu()
         return v == 1 and "Izquierda" or "Derecha"
     end)
     Settings.CreateSlider(category, iconSideSetting, sideOptions, "En qué lado de la barra de vida del mob aparecen los iconos de interrupción.")
+    
+    -- Icon Offset (horizontal distance from health bar edge)
+    local iconOffsetSetting = Settings.RegisterProxySetting(
+        category, "Cortio_IconOffset", Settings.VarType.Number, "Separación horizontal de iconos",
+        (CortioDB and CortioDB.iconOffset) or 0,
+        function() return (CortioDB and CortioDB.iconOffset) or 0 end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.iconOffset = val
+            Cortio.UI:UpdateAllNameplates()
+        end
+    )
+    local offsetOpts = Settings.CreateSliderOptions(-50, 50, 1)
+    offsetOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
+    Settings.CreateSlider(category, iconOffsetSetting, offsetOpts, "Ajusta la distancia horizontal de los iconos respecto al borde de la barra de vida.")
     
     -- Debug Logs
     local debugSetting = Settings.RegisterProxySetting(

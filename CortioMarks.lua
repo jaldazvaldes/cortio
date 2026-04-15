@@ -35,7 +35,12 @@ function Cortio.Marks:ClearPlayerMark(who)
     end
 end
 
-function Cortio.Marks:AutoAssignMarkerSlot()
+function Cortio.Marks:GetMarkerSlotForPlayer(targetName)
+    if not targetName then return 8 end
+    if targetName == Cortio.PlayerName and CortioDB and CortioDB.markerSlot and CortioDB.markerSlot > 0 then
+        return CortioDB.markerSlot
+    end
+    
     if not IsInGroup() and not IsInGroup(LE_PARTY_CATEGORY_INSTANCE) and not IsInRaid() then return 8 end
 
     local allPlayers = {}
@@ -63,16 +68,30 @@ function Cortio.Marks:AutoAssignMarkerSlot()
         end
     end
 
+    -- Add the target if not already in roster (e.g. test mode instances)
+    local found = false
+    local tShort = Cortio.Data:ShortName(targetName)
+    for _, n in ipairs(allPlayers) do
+        if n == targetName or Cortio.Data:ShortName(n) == tShort then
+            found = true
+            break
+        end
+    end
+    if not found then allPlayers[#allPlayers+1] = targetName end
+
     table.sort(allPlayers)
 
-    local myShort = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or ""
     for idx, name in ipairs(allPlayers) do
         local nameShort = Cortio.Data:ShortName(name)
-        if name == Cortio.PlayerName or nameShort == myShort then
+        if name == targetName or nameShort == tShort then
             return math.max(1, 9 - idx)
         end
     end
     return 8
+end
+
+function Cortio.Marks:AutoAssignMarkerSlot()
+    return Cortio.Marks:GetMarkerSlotForPlayer(Cortio.PlayerName)
 end
 
 function Cortio.Marks:GetPlayerMarkerSlotSafe()

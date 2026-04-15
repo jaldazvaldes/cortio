@@ -88,6 +88,7 @@ eventFrame:RegisterEvent("UNIT_DIED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("RAID_TARGET_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
 
@@ -178,6 +179,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Cortio.Roster:AutoRegisterByClass()
         Cortio.UI:UpdatePanel()
         Cortio.UI:SetupKickIcon()
+
+    elseif event == "RAID_TARGET_UPDATE" then
+        -- Raid marker icons changed on mobs — refresh nameplate matching
+        Cortio.Data:SafeCall("RaidTargetUpdate", function()
+            Cortio.UI:UpdateAllNameplates()
+        end)
 
     elseif event == "UNIT_DIED" then
         local cleared = false
