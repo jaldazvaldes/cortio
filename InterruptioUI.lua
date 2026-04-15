@@ -1,10 +1,10 @@
 --------------------------------------------------------------
--- CORTIO - UI (Modern Display)
+-- INTERRUPTIO - UI (Modern Display)
 --------------------------------------------------------------
-Cortio = Cortio or {}
-Cortio.UI = {}
+Interruptio = Interruptio or {}
+Interruptio.UI = {}
 
-Cortio.UI.ActiveNameplates = {}
+Interruptio.UI.ActiveNameplates = {}
 local nameplateFrames = {}
 local MAX_ICONS_PER_PLATE = 8
 
@@ -19,7 +19,7 @@ local PADDING           = 6
 local BAR_GAP           = 2
 local HEADER_GAP        = 2
 
--- Color Palette (Cortio: deep blue + cyan accent)
+-- Color Palette (Interruptio: deep blue + cyan accent)
 local C_BG        = { 8/255, 12/255, 24/255 }         -- #080c18
 local C_HEADER_BG = { 10/255, 16/255, 30/255 }        -- #0a101e
 local C_BAR_BG    = { 14/255, 20/255, 36/255 }        -- #0e1424
@@ -51,7 +51,7 @@ end
 -- ============================================================
 -- Panel Frame
 -- ============================================================
-local panel = CreateFrame("Frame", "CortioPanelFrame", UIParent, "BackdropTemplate")
+local panel = CreateFrame("Frame", "InterruptioPanelFrame", UIParent, "BackdropTemplate")
 panel:SetSize(FRAME_WIDTH, HEADER_HEIGHT + 10)
 panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
 panel:SetMovable(true)
@@ -60,9 +60,9 @@ panel:RegisterForDrag("LeftButton")
 panel:SetScript("OnDragStart", panel.StartMoving)
 panel:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
-    if CortioDB then
+    if InterruptioDB then
         local point, _, relPoint, x, y = self:GetPoint()
-        CortioDB.framePoint = { point, nil, relPoint, x, y }
+        InterruptioDB.framePoint = { point, nil, relPoint, x, y }
     end
 end)
 panel:SetFrameStrata("HIGH")
@@ -99,7 +99,7 @@ local titleText = headerFrame:CreateFontString(nil, "OVERLAY")
 titleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
 titleText:SetShadowOffset(1, -1)
 titleText:SetPoint("LEFT", 10, 0)
-titleText:SetText("|cff00d4ffCORTIO|r")
+titleText:SetText("|cff00d4ffINTERRUPTIO|r")
 
 -- Badge pill (ready/total counter)
 local badgeFrame = CreateFrame("Frame", nil, headerFrame)
@@ -116,7 +116,7 @@ badgeText:SetShadowOffset(1, -1)
 badgeText:SetPoint("CENTER", 0, 0)
 badgeText:SetTextColor(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3])
 
-Cortio.UI.Panel = panel
+Interruptio.UI.Panel = panel
 
 -- Content area (holds bars)
 local contentFrame = CreateFrame("Frame", nil, panel)
@@ -146,7 +146,7 @@ local function getBar(index)
     bar.border:SetAllPoints()
     bar.border:SetBackdrop({ edgeFile = "Interface\\BUTTONS\\WHITE8X8", edgeSize = 1 })
 
-    -- Class-color left stripe (3px accent — Cortio signature)
+    -- Class-color left stripe (3px accent — Interruptio signature)
     bar.classStripe = bar:CreateTexture(nil, "ARTWORK", nil, 3)
     bar.classStripe:SetWidth(3)
     bar.classStripe:SetPoint("TOPLEFT", 0, 0)
@@ -225,7 +225,7 @@ end
 -- ============================================================
 -- UpdatePanel (Cooldown spiral + progress strip rendering)
 -- ============================================================
-function Cortio.UI:UpdatePanel()
+function Interruptio.UI:UpdatePanel()
     -- Hide all existing bars
     for i = 1, activeBarCount do
         if barPool[i] then barPool[i]:Hide() end
@@ -236,7 +236,7 @@ function Cortio.UI:UpdatePanel()
     local readyCount = 0
     local totalCount = 0
 
-    for rPlayerName, data in pairs(Cortio.RosterList) do
+    for rPlayerName, data in pairs(Interruptio.RosterList) do
         local rClass = data.class
         local sLeft = (data.cdEnd or 0) - now
         local isReady = sLeft <= 0
@@ -248,9 +248,9 @@ function Cortio.UI:UpdatePanel()
 
         -- Find assigned mark
         local assignedMark = nil
-        local rShort = Cortio.Data:ShortName(rPlayerName)
-        for _, m in ipairs(Cortio.Marks.Active) do
-            if m.playerName == rPlayerName or Cortio.Data:ShortName(m.playerName) == rShort then
+        local rShort = Interruptio.Data:ShortName(rPlayerName)
+        for _, m in ipairs(Interruptio.Marks.Active) do
+            if m.playerName == rPlayerName or Interruptio.Data:ShortName(m.playerName) == rShort then
                 assignedMark = m
                 break
             end
@@ -259,7 +259,7 @@ function Cortio.UI:UpdatePanel()
         totalCount = totalCount + 1
         if isReady then readyCount = readyCount + 1 end
 
-        local staticSlot = Cortio.Marks:GetMarkerSlotForPlayer(rPlayerName)
+        local staticSlot = Interruptio.Marks:GetMarkerSlotForPlayer(rPlayerName)
         
         table.insert(entries, {
             playerName = rPlayerName,
@@ -302,7 +302,7 @@ function Cortio.UI:UpdatePanel()
             PADDING, -(BAR_GAP + (i - 1) * (BAR_HEIGHT + BAR_GAP)))
 
         -- Parse class color
-        local colorHex = Cortio.Data.CLASS_COLORS[entry.class] or "FFFFFFFF"
+        local colorHex = Interruptio.Data.CLASS_COLORS[entry.class] or "FFFFFFFF"
         local classR = tonumber(colorHex:sub(3, 4), 16) / 255
         local classG = tonumber(colorHex:sub(5, 6), 16) / 255
         local classB = tonumber(colorHex:sub(7, 8), 16) / 255
@@ -353,16 +353,16 @@ function Cortio.UI:UpdatePanel()
 
         -- Spell icon (spec-aware)
         local spellId = nil
-        if entry.specId > 0 and Cortio.Data.SPEC_INTERRUPTS[entry.specId] then
-            spellId = Cortio.Data.SPEC_INTERRUPTS[entry.specId].spellId
+        if entry.specId > 0 and Interruptio.Data.SPEC_INTERRUPTS[entry.specId] then
+            spellId = Interruptio.Data.SPEC_INTERRUPTS[entry.specId].spellId
         end
         if not spellId then
-            spellId = Cortio.Data.CLASS_INTERRUPT_SPELLID[entry.class]
+            spellId = Interruptio.Data.CLASS_INTERRUPT_SPELLID[entry.class]
         end
 
         bar.iconHit._spellID = spellId
 
-        local iconID = Cortio.Data.CLASS_INTERRUPT_ICONS[entry.class]
+        local iconID = Interruptio.Data.CLASS_INTERRUPT_ICONS[entry.class]
         if iconID then
             bar.icon:SetTexture(tonumber(iconID))
             bar.icon:Show()
@@ -386,7 +386,7 @@ function Cortio.UI:UpdatePanel()
         bar.nameText:SetPoint("RIGHT", bar.statusText, "LEFT", -4, 0)
 
         -- Player name (class colored)
-        bar.nameText:SetText("|c" .. colorHex .. Cortio.Data:ShortName(entry.playerName) .. "|r")
+        bar.nameText:SetText("|c" .. colorHex .. Interruptio.Data:ShortName(entry.playerName) .. "|r")
 
         -- Result indicator
         local resultIcon = ""
@@ -410,8 +410,8 @@ function Cortio.UI:UpdatePanel()
     panel:SetHeight(HEADER_HEIGHT + HEADER_GAP + contentHeight + 4)
 
     -- Restore saved position on first show
-    if CortioDB and CortioDB.framePoint and not panel._posRestored then
-        local p = CortioDB.framePoint
+    if InterruptioDB and InterruptioDB.framePoint and not panel._posRestored then
+        local p = InterruptioDB.framePoint
         if p[1] then
             panel:ClearAllPoints()
             panel:SetPoint(p[1], UIParent, p[3], p[4], p[5])
@@ -421,7 +421,7 @@ function Cortio.UI:UpdatePanel()
 
     panel:Show()
 
-    Cortio.Data:SafeCall("Nameplates", function() Cortio.UI:UpdateAllNameplates() end)
+    Interruptio.Data:SafeCall("Nameplates", function() Interruptio.UI:UpdateAllNameplates() end)
 end
 
 -- ============================================================
@@ -493,8 +493,8 @@ local function GetNameplateFrame()
     return f
 end
 
-function Cortio.UI:ReleaseNameplateFrame(unit)
-    local f = Cortio.UI.ActiveNameplates[unit]
+function Interruptio.UI:ReleaseNameplateFrame(unit)
+    local f = Interruptio.UI.ActiveNameplates[unit]
     if f then
         for _, ic in ipairs(f.icons) do
             ic:Hide()
@@ -511,34 +511,34 @@ function Cortio.UI:ReleaseNameplateFrame(unit)
         if np then
             local uFrame = np.UnitFrame or np
             -- Restore scale
-            if uFrame._cortioScaleBoosted then
-                pcall(function() uFrame:SetScale(uFrame._cortioOrigScale or 1) end)
-                uFrame._cortioScaleBoosted = nil
-                uFrame._cortioOrigScale = nil
+            if uFrame._interruptioScaleBoosted then
+                pcall(function() uFrame:SetScale(uFrame._interruptioOrigScale or 1) end)
+                uFrame._interruptioScaleBoosted = nil
+                uFrame._interruptioOrigScale = nil
             end
             -- Restore reparenting (devolver UnitFrame a WorldFrame/np)
-            if uFrame._cortioReparented then
+            if uFrame._interruptioReparented then
                 pcall(function()
-                    uFrame:SetParent(uFrame._cortioOrigParent or np)
-                    uFrame:SetFrameStrata(uFrame._cortioOrigStrata or "BACKGROUND")
-                    uFrame:SetFrameLevel(uFrame._cortioOrigLevel or 1)
+                    uFrame:SetParent(uFrame._interruptioOrigParent or np)
+                    uFrame:SetFrameStrata(uFrame._interruptioOrigStrata or "BACKGROUND")
+                    uFrame:SetFrameLevel(uFrame._interruptioOrigLevel or 1)
                     uFrame:ClearAllPoints()
-                    uFrame:SetAllPoints(uFrame._cortioOrigParent or np)
+                    uFrame:SetAllPoints(uFrame._interruptioOrigParent or np)
                 end)
-                uFrame._cortioReparented = nil
-                uFrame._cortioOrigParent = nil
-                uFrame._cortioOrigStrata = nil
-                uFrame._cortioOrigLevel = nil
+                uFrame._interruptioReparented = nil
+                uFrame._interruptioOrigParent = nil
+                uFrame._interruptioOrigStrata = nil
+                uFrame._interruptioOrigLevel = nil
             end
         end
         f:Hide()
         f:ClearAllPoints()
         f.inUse = false
-        Cortio.UI.ActiveNameplates[unit] = nil
+        Interruptio.UI.ActiveNameplates[unit] = nil
     end
 end
 
-function Cortio.UI:UpdateNameplate(unit)
+function Interruptio.UI:UpdateNameplate(unit)
     local marks = {}
 
     -- Read raid marker on this nameplate (taint-safe)
@@ -546,12 +546,12 @@ function Cortio.UI:UpdateNameplate(unit)
     if UnitExists(unit) then
         local okRT, idx = pcall(GetRaidTargetIndex, unit)
         -- Extra security: drop it immediately if it's flagged as secret by the client
-        if okRT and idx and not Cortio.Taint:IsSecret(idx) then
+        if okRT and idx and not Interruptio.Taint:IsSecret(idx) then
             raidIndex = idx 
         end
     end
 
-    for _, mark in ipairs(Cortio.Marks.Active) do
+    for _, mark in ipairs(Interruptio.Marks.Active) do
         local isMatch = false
         
         -- 1) Cached from a previous frame
@@ -571,7 +571,7 @@ function Cortio.UI:UpdateNameplate(unit)
         -- 3) Fallback: local UnitIsUnit("target", nameplateX)
         if not isMatch and not mark.nameplateUnit and mark.unitToken then
             if mark.unitToken == "target" and UnitExists("target") then
-                if Cortio.Taint:SafeIsMatch("target", unit) then
+                if Interruptio.Taint:SafeIsMatch("target", unit) then
                     isMatch = true
                     mark.unitToken = nil
                 end
@@ -582,23 +582,23 @@ function Cortio.UI:UpdateNameplate(unit)
 
         if isMatch then
             mark.nameplateUnit = unit
-            mark.isLocal = (mark.playerName == Cortio.PlayerName)
+            mark.isLocal = (mark.playerName == Interruptio.PlayerName)
             table.insert(marks, mark)
         elseif mark.nameplateUnit == unit then
             mark.nameplateUnit = nil
         end
     end
     
-    local f = Cortio.UI.ActiveNameplates[unit]
+    local f = Interruptio.UI.ActiveNameplates[unit]
     
     if #marks == 0 then 
-        if f then Cortio.UI:ReleaseNameplateFrame(unit) end
+        if f then Interruptio.UI:ReleaseNameplateFrame(unit) end
         return 
     end
     
     local np = C_NamePlate.GetNamePlateForUnit(unit)
     if not np then 
-        if f then Cortio.UI:ReleaseNameplateFrame(unit) end
+        if f then Interruptio.UI:ReleaseNameplateFrame(unit) end
         return 
     end
     
@@ -608,15 +608,15 @@ function Cortio.UI:UpdateNameplate(unit)
 
     if not f then
         f = GetNameplateFrame()
-        Cortio.UI.ActiveNameplates[unit] = f
+        Interruptio.UI.ActiveNameplates[unit] = f
     end
     
     if f:GetParent() ~= UIParent then f:SetParent(UIParent) end
     f:ClearAllPoints()
     
     -- Anclar iconos a la barra de vida con offset configurable por el usuario
-    local iconSide = (CortioDB and CortioDB.iconSide) or 1
-    local iconOffset = (CortioDB and CortioDB.iconOffset) or 0
+    local iconSide = (InterruptioDB and InterruptioDB.iconSide) or 1
+    local iconOffset = (InterruptioDB and InterruptioDB.iconOffset) or 0
     if iconSide == 2 then
         f:SetPoint("LEFT", barFrame, "RIGHT", iconOffset, 0)
     else
@@ -628,29 +628,29 @@ function Cortio.UI:UpdateNameplate(unit)
     local isMyMark = glowMark and glowMark.isLocal
 
     -- === NAMEPLATE BOOST: scale + strata ===
-    local showGlow = (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow
-    local scaleBoost = (CortioDB and CortioDB.nameplateScaleBoost) or 1.15
+    local showGlow = (not InterruptioDB or InterruptioDB.nameplateGlow == nil) and true or InterruptioDB.nameplateGlow
+    local scaleBoost = (InterruptioDB and InterruptioDB.nameplateScaleBoost) or 1.15
     
     if np then
         -- Scale boost: solo para el mob que TÚ tienes marcado (isMyMark)
         if isMyMark and showGlow and scaleBoost ~= 1.0 then
-            if not uiFrame._cortioOrigScale then
-                pcall(function() uiFrame._cortioOrigScale = uiFrame:GetScale() end)
+            if not uiFrame._interruptioOrigScale then
+                pcall(function() uiFrame._interruptioOrigScale = uiFrame:GetScale() end)
             end
-            local desiredScale = (uiFrame._cortioOrigScale or 1) * scaleBoost
+            local desiredScale = (uiFrame._interruptioOrigScale or 1) * scaleBoost
             pcall(function()
                 local currentScale = uiFrame:GetScale()
                 if math.abs(currentScale - desiredScale) > 0.01 then
                     uiFrame:SetScale(desiredScale)
                 end
             end)
-            uiFrame._cortioScaleBoosted = true
+            uiFrame._interruptioScaleBoosted = true
         else
             -- Restaurar escala si ya no es tu marca o se desactiva
-            if uiFrame._cortioScaleBoosted then
-                pcall(function() uiFrame:SetScale(uiFrame._cortioOrigScale or 1) end)
-                uiFrame._cortioScaleBoosted = nil
-                uiFrame._cortioOrigScale = nil
+            if uiFrame._interruptioScaleBoosted then
+                pcall(function() uiFrame:SetScale(uiFrame._interruptioOrigScale or 1) end)
+                uiFrame._interruptioScaleBoosted = nil
+                uiFrame._interruptioOrigScale = nil
             end
         end
         
@@ -660,14 +660,14 @@ function Cortio.UI:UpdateNameplate(unit)
         -- La ÚNICA forma de superar esto es sacar el UnitFrame de WorldFrame
         -- y reparentarlo a UIParent, donde sí funciona el sistema de strata.
         -- ============================================================
-        local bringToFront = (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront
+        local bringToFront = (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront
         if isMyMark and bringToFront then
-            if not uiFrame._cortioReparented then
+            if not uiFrame._interruptioReparented then
                 -- Guardar estado original
                 pcall(function()
-                    uiFrame._cortioOrigParent = uiFrame:GetParent()
-                    uiFrame._cortioOrigStrata = uiFrame:GetFrameStrata()
-                    uiFrame._cortioOrigLevel = uiFrame:GetFrameLevel()
+                    uiFrame._interruptioOrigParent = uiFrame:GetParent()
+                    uiFrame._interruptioOrigStrata = uiFrame:GetFrameStrata()
+                    uiFrame._interruptioOrigLevel = uiFrame:GetFrameLevel()
                 end)
                 -- Reparentar a UIParent para salir de WorldFrame
                 pcall(function()
@@ -675,7 +675,7 @@ function Cortio.UI:UpdateNameplate(unit)
                     uiFrame:SetFrameStrata("TOOLTIP")
                     uiFrame:SetFrameLevel(9000)
                 end)
-                uiFrame._cortioReparented = true
+                uiFrame._interruptioReparented = true
             end
             -- Re-anclar a np cada tick (np se mueve con el mob en 3D)
             pcall(function()
@@ -684,18 +684,18 @@ function Cortio.UI:UpdateNameplate(unit)
             end)
         else
             -- Restaurar: devolver el UnitFrame a su padre original (np)
-            if uiFrame._cortioReparented then
+            if uiFrame._interruptioReparented then
                 pcall(function()
-                    uiFrame:SetParent(uiFrame._cortioOrigParent or np)
-                    uiFrame:SetFrameStrata(uiFrame._cortioOrigStrata or "BACKGROUND")
-                    uiFrame:SetFrameLevel(uiFrame._cortioOrigLevel or 1)
+                    uiFrame:SetParent(uiFrame._interruptioOrigParent or np)
+                    uiFrame:SetFrameStrata(uiFrame._interruptioOrigStrata or "BACKGROUND")
+                    uiFrame:SetFrameLevel(uiFrame._interruptioOrigLevel or 1)
                     uiFrame:ClearAllPoints()
-                    uiFrame:SetAllPoints(uiFrame._cortioOrigParent or np)
+                    uiFrame:SetAllPoints(uiFrame._interruptioOrigParent or np)
                 end)
-                uiFrame._cortioReparented = nil
-                uiFrame._cortioOrigParent = nil
-                uiFrame._cortioOrigStrata = nil
-                uiFrame._cortioOrigLevel = nil
+                uiFrame._interruptioReparented = nil
+                uiFrame._interruptioOrigParent = nil
+                uiFrame._interruptioOrigStrata = nil
+                uiFrame._interruptioOrigLevel = nil
             end
         end
     end
@@ -738,7 +738,7 @@ function Cortio.UI:UpdateNameplate(unit)
         pcall(function() lvl = (uiFrame:GetFrameLevel() or 1) + 4 end)
         
         -- Si el Bring to Front está activado, blindamos el brillo a capa DIALOG independientemente de la placa
-        local bringToFront = (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront
+        local bringToFront = (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront
         if isMyMark and bringToFront then 
             strata = "DIALOG" 
         end
@@ -766,7 +766,7 @@ function Cortio.UI:UpdateNameplate(unit)
         
         -- Color by class
         if glowMark then
-            local colorHex = Cortio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
+            local colorHex = Interruptio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
             local gR = tonumber(colorHex:sub(3, 4), 16) / 255
             local gG = tonumber(colorHex:sub(5, 6), 16) / 255
             local gB = tonumber(colorHex:sub(7, 8), 16) / 255
@@ -783,24 +783,24 @@ function Cortio.UI:UpdateNameplate(unit)
             if f.glowAG then f.glowAG:Stop() end
         end
         -- Restore nameplate scale
-        if np and np._cortioScaled then
-            np:SetScale(np._cortioOrigScale or 1)
-            np._cortioScaled = false
+        if np and np._interruptioScaled then
+            np:SetScale(np._interruptioOrigScale or 1)
+            np._interruptioScaled = false
         end
     end
     
     local iconIdx = 0
     for _, mark in ipairs(marks) do
-        local classIcon = Cortio.Data.CLASS_INTERRUPT_ICONS[mark.playerClass]
+        local classIcon = Interruptio.Data.CLASS_INTERRUPT_ICONS[mark.playerClass]
         if classIcon then
             iconIdx = iconIdx + 1
             if iconIdx <= MAX_ICONS_PER_PLATE then
                 local ic = f.icons[iconIdx]
                 ic.texture:SetTexture(tonumber(classIcon))
                 ic.ownerName = mark.playerName
-                ic.isLocal = (mark.playerName == Cortio.PlayerName)
+                ic.isLocal = (mark.playerName == Interruptio.PlayerName)
                 
-                local pData = Cortio.RosterList[mark.playerName]
+                local pData = Interruptio.RosterList[mark.playerName]
                 if pData and pData.cdEnd and pData.cdEnd > GetTime() then
                     ic.cooldown:SetCooldown(pData.cdEnd - pData.cdTotal, pData.cdTotal)
                 else
@@ -832,11 +832,11 @@ function Cortio.UI:UpdateNameplate(unit)
     f:Show()
 end
 
-function Cortio.UI:UpdateAllNameplates()
+function Interruptio.UI:UpdateAllNameplates()
     for i = 1, 40 do
         local unit = "nameplate" .. i
         if UnitExists(unit) then
-            Cortio.UI:UpdateNameplate(unit)
+            Interruptio.UI:UpdateNameplate(unit)
         end
     end
 end
@@ -844,7 +844,7 @@ end
 -- ============================================================
 -- Kick Icon (unchanged)
 -- ============================================================
-local kickIconFrame = CreateFrame("Frame", "CortioKickIconFrame", panel)
+local kickIconFrame = CreateFrame("Frame", "InterruptioKickIconFrame", panel)
 kickIconFrame:SetSize(32, 32)
 kickIconFrame:SetPoint("RIGHT", panel, "LEFT", -6, 0)
 local kickIconTexture = kickIconFrame:CreateTexture(nil, "ARTWORK")
@@ -857,7 +857,7 @@ if not kickIconBorder:GetAtlas() then
     kickIconBorder:SetAllPoints(kickIconFrame)
 end
 
-local kickCooldown = CreateFrame("Cooldown", "CortioKickCooldown", kickIconFrame, "CooldownFrameTemplate")
+local kickCooldown = CreateFrame("Cooldown", "InterruptioKickCooldown", kickIconFrame, "CooldownFrameTemplate")
 kickCooldown:SetAllPoints(kickIconFrame)
 kickCooldown:SetDrawSwipe(true)
 kickCooldown:SetDrawEdge(true)
@@ -865,11 +865,11 @@ kickCooldown:SetDrawBling(true)
 kickCooldown:SetSwipeColor(0, 0, 0, 0.65)
 kickCooldown:SetHideCountdownNumbers(false)
 
-function Cortio.UI:UpdateKickCooldown()
-    local myInterruptSpellID = Cortio.Data.CLASS_INTERRUPT_SPELLID[Cortio.PlayerClass]
-    if not myInterruptSpellID or not Cortio.RosterList[Cortio.PlayerName] then return end
-    local cdEnd = Cortio.RosterList[Cortio.PlayerName].cdEnd
-    local cdTotal = Cortio.RosterList[Cortio.PlayerName].cdTotal
+function Interruptio.UI:UpdateKickCooldown()
+    local myInterruptSpellID = Interruptio.Data.CLASS_INTERRUPT_SPELLID[Interruptio.PlayerClass]
+    if not myInterruptSpellID or not Interruptio.RosterList[Interruptio.PlayerName] then return end
+    local cdEnd = Interruptio.RosterList[Interruptio.PlayerName].cdEnd
+    local cdTotal = Interruptio.RosterList[Interruptio.PlayerName].cdTotal
     if cdEnd and cdTotal and cdEnd > GetTime() then
         kickCooldown:SetCooldown(cdEnd - cdTotal, cdTotal)
     else
@@ -877,24 +877,24 @@ function Cortio.UI:UpdateKickCooldown()
     end
 end
 
-function Cortio.UI:SetupKickIcon()
-    Cortio.Roster:EnsurePlayerInfo()
-    if not Cortio.PlayerClass then return end
+function Interruptio.UI:SetupKickIcon()
+    Interruptio.Roster:EnsurePlayerInfo()
+    if not Interruptio.PlayerClass then return end
 
-    local iconID = Cortio.Data.CLASS_INTERRUPT_ICONS[Cortio.PlayerClass]
+    local iconID = Interruptio.Data.CLASS_INTERRUPT_ICONS[Interruptio.PlayerClass]
     if iconID then
         kickIconTexture:SetTexture(tonumber(iconID))
         kickIconFrame:Show()
     else
         kickIconFrame:Hide()
     end
-    Cortio.UI:UpdateKickCooldown()
+    Interruptio.UI:UpdateKickCooldown()
 end
 
 panel:HookScript("OnShow", function()
-    if Cortio.Data.CLASS_INTERRUPT_SPELLID[Cortio.PlayerClass] then
+    if Interruptio.Data.CLASS_INTERRUPT_SPELLID[Interruptio.PlayerClass] then
         kickIconFrame:Show()
-        Cortio.UI:UpdateKickCooldown()
+        Interruptio.UI:UpdateKickCooldown()
     end
 end)
 panel:HookScript("OnHide", function()
@@ -908,21 +908,21 @@ panel:Hide()
 -- Settings (unchanged)
 -- ============================================================
 local settingsCreated = false
-function Cortio.UI:CreateSettingsMenu()
+function Interruptio.UI:CreateSettingsMenu()
     if settingsCreated then return end
     if not Settings or not Settings.RegisterVerticalLayoutCategory then return end
     settingsCreated = true
     
-    local category = Settings.RegisterVerticalLayoutCategory("Cortio")
+    local category = Settings.RegisterVerticalLayoutCategory("Interruptio")
     
     local scaleSetting = Settings.RegisterProxySetting(
-        category, "Cortio_Scale", Settings.VarType.Number, "Tamaño de la Ventana", 
-        (CortioDB and CortioDB.scale) or 1.0, 
-        function() return (CortioDB and CortioDB.scale) or 1.0 end,
+        category, "Interruptio_Scale", Settings.VarType.Number, "Tamaño de la Ventana", 
+        (InterruptioDB and InterruptioDB.scale) or 1.0, 
+        function() return (InterruptioDB and InterruptioDB.scale) or 1.0 end,
         function(val) 
-            if not CortioDB then CortioDB = {} end
-            CortioDB.scale = val 
-            Cortio.UI.Panel:SetScale(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.scale = val 
+            Interruptio.UI.Panel:SetScale(val) 
         end
     )
     local scaleOpts = Settings.CreateSliderOptions(0.5, 2.0, 0.05)
@@ -930,64 +930,64 @@ function Cortio.UI:CreateSettingsMenu()
     Settings.CreateSlider(category, scaleSetting, scaleOpts, "Ajusta la escala del panel flotante.")
     
     local announceSetting = Settings.RegisterProxySetting(
-        category, "Cortio_Announce", Settings.VarType.Boolean, "Anunciar asignaciones en grupo", 
-        (not CortioDB or CortioDB.announce == nil) and true or CortioDB.announce, 
-        function() return (not CortioDB or CortioDB.announce == nil) and true or CortioDB.announce end,
+        category, "Interruptio_Announce", Settings.VarType.Boolean, "Anunciar asignaciones en grupo", 
+        (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce, 
+        function() return (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce end,
         function(val) 
-            if not CortioDB then CortioDB = {} end
-            CortioDB.announce = val 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.announce = val 
         end
     )
     Settings.CreateCheckbox(category, announceSetting, "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca.")
     
     local testSetting = Settings.RegisterProxySetting(
-        category, "Cortio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
-        (CortioDB and CortioDB.testMode) or false, 
-        function() return (CortioDB and CortioDB.testMode) or false end,
+        category, "Interruptio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
+        (InterruptioDB and InterruptioDB.testMode) or false, 
+        function() return (InterruptioDB and InterruptioDB.testMode) or false end,
         function(val) 
-            if not CortioDB then CortioDB = {} end
-            CortioDB.testMode = val
-            Cortio.Roster:Rebuild()
-            if val then Cortio.UI.Panel:Show() else Cortio.UI.Panel:Hide() end
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.testMode = val
+            Interruptio.Roster:Rebuild()
+            if val then Interruptio.UI.Panel:Show() else Interruptio.UI.Panel:Hide() end
         end
     )
     Settings.CreateCheckbox(category, testSetting, "Genera un grupo falso para probar la interfaz de cortes.")
     
     -- Nameplate Glow
     local glowSetting = Settings.RegisterProxySetting(
-        category, "Cortio_NameplateGlow", Settings.VarType.Boolean, "Brillo en Nameplate",
-        (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow,
-        function() return (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow end,
+        category, "Interruptio_NameplateGlow", Settings.VarType.Boolean, "Brillo en Nameplate",
+        (not InterruptioDB or InterruptioDB.nameplateGlow == nil) and true or InterruptioDB.nameplateGlow,
+        function() return (not InterruptioDB or InterruptioDB.nameplateGlow == nil) and true or InterruptioDB.nameplateGlow end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.nameplateGlow = val
-            Cortio.UI:UpdateAllNameplates()
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.nameplateGlow = val
+            Interruptio.UI:UpdateAllNameplates()
         end
     )
     Settings.CreateCheckbox(category, glowSetting, "Muestra un borde brillante alrededor de la nameplate del mob asignado para cortarte.")
     
     -- Bring to Front Option
     local frontSetting = Settings.RegisterProxySetting(
-        category, "Cortio_BringToFront", Settings.VarType.Boolean, "Traer barra al Frente (Top Layer)",
-        (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront,
-        function() return (not CortioDB or CortioDB.bringToFront == nil) and true or CortioDB.bringToFront end,
+        category, "Interruptio_BringToFront", Settings.VarType.Boolean, "Traer barra al Frente (Top Layer)",
+        (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront,
+        function() return (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.bringToFront = val
-            Cortio.UI:UpdateAllNameplates()
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.bringToFront = val
+            Interruptio.UI:UpdateAllNameplates()
         end
     )
     Settings.CreateCheckbox(category, frontSetting, "Fuerza a la barra de vida de tu objetivo asignado a renderizarse por encima del resto (FrameStrata: DIALOG) cuando tienes la patada asignada.")
     
     -- Nameplate Scale Boost
     local npScaleSetting = Settings.RegisterProxySetting(
-        category, "Cortio_NPScale", Settings.VarType.Number, "Tamaño de la Barra del Objetivo",
-        (CortioDB and CortioDB.nameplateScaleBoost) or 1.15,
-        function() return (CortioDB and CortioDB.nameplateScaleBoost) or 1.15 end,
+        category, "Interruptio_NPScale", Settings.VarType.Number, "Tamaño de la Barra del Objetivo",
+        (InterruptioDB and InterruptioDB.nameplateScaleBoost) or 1.15,
+        function() return (InterruptioDB and InterruptioDB.nameplateScaleBoost) or 1.15 end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.nameplateScaleBoost = val
-            Cortio.UI:UpdateAllNameplates()
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.nameplateScaleBoost = val
+            Interruptio.UI:UpdateAllNameplates()
         end
     )
     local npScaleOpts = Settings.CreateSliderOptions(0.8, 2.0, 0.05)
@@ -997,13 +997,13 @@ function Cortio.UI:CreateSettingsMenu()
     -- ============================================================
     -- Icon Position (LEFT / RIGHT of nameplate)
     local iconSideSetting = Settings.RegisterProxySetting(
-        category, "Cortio_IconSide", Settings.VarType.Number, "Lado de los iconos de corte",
-        (CortioDB and CortioDB.iconSide) or 1,
-        function() return (CortioDB and CortioDB.iconSide) or 1 end,
+        category, "Interruptio_IconSide", Settings.VarType.Number, "Lado de los iconos de corte",
+        (InterruptioDB and InterruptioDB.iconSide) or 1,
+        function() return (InterruptioDB and InterruptioDB.iconSide) or 1 end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.iconSide = val
-            Cortio.UI:UpdateAllNameplates()
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.iconSide = val
+            Interruptio.UI:UpdateAllNameplates()
         end
     )
     local sideOptions = Settings.CreateSliderOptions(1, 2, 1)
@@ -1014,13 +1014,13 @@ function Cortio.UI:CreateSettingsMenu()
     
     -- Icon Offset (horizontal distance from health bar edge)
     local iconOffsetSetting = Settings.RegisterProxySetting(
-        category, "Cortio_IconOffset", Settings.VarType.Number, "Separación horizontal de iconos",
-        (CortioDB and CortioDB.iconOffset) or 0,
-        function() return (CortioDB and CortioDB.iconOffset) or 0 end,
+        category, "Interruptio_IconOffset", Settings.VarType.Number, "Separación horizontal de iconos",
+        (InterruptioDB and InterruptioDB.iconOffset) or 0,
+        function() return (InterruptioDB and InterruptioDB.iconOffset) or 0 end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.iconOffset = val
-            Cortio.UI:UpdateAllNameplates()
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.iconOffset = val
+            Interruptio.UI:UpdateAllNameplates()
         end
     )
     local offsetOpts = Settings.CreateSliderOptions(-50, 50, 1)
@@ -1029,12 +1029,12 @@ function Cortio.UI:CreateSettingsMenu()
     
     -- Debug Logs
     local debugSetting = Settings.RegisterProxySetting(
-        category, "Cortio_DebugLogs", Settings.VarType.Boolean, "Logs de Debug",
-        (CortioDB and CortioDB.debugLogs) or false,
-        function() return (CortioDB and CortioDB.debugLogs) or false end,
+        category, "Interruptio_DebugLogs", Settings.VarType.Boolean, "Logs de Debug",
+        (InterruptioDB and InterruptioDB.debugLogs) or false,
+        function() return (InterruptioDB and InterruptioDB.debugLogs) or false end,
         function(val)
-            if not CortioDB then CortioDB = {} end
-            CortioDB.debugLogs = val
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.debugLogs = val
         end
     )
     Settings.CreateCheckbox(category, debugSetting, "Muestra mensajes de debug en el chat (correlación de señales, red, etc).")
@@ -1045,89 +1045,89 @@ end
 -- ============================================================
 -- Slash Commands (unchanged)
 -- ============================================================
-SLASH_CORTIO1 = "/cortio"
-SLASH_CORTIO2 = "/ct"
-SlashCmdList["CORTIO"] = function(msg)
+SLASH_INTERRUPTIO1 = "/interruptio"
+SLASH_INTERRUPTIO2 = "/it"
+SlashCmdList["INTERRUPTIO"] = function(msg)
     local cmd = strsplit(" ", msg, 2)
     cmd = (cmd or ""):lower()
     
     if cmd == "mark" or cmd == "m" then
-        print("|cFF00FFFF[Cortio]|r |cFFFF0000ERROR CRITICO:|r Usa un Atajo de Teclado nativo (ESC > Opciones > Atajos > AddOns > Cortio).")
+        print("|cFF00FFFF[Interruptio]|r |cFFFF0000ERROR CRITICO:|r Usa un Atajo de Teclado nativo (ESC > Opciones > Atajos > AddOns > Interruptio).")
     elseif cmd:match("^slot") then
         local n = tonumber(cmd:match("%d+"))
-        if not CortioDB then CortioDB = {} end
+        if not InterruptioDB then InterruptioDB = {} end
         if n and n >= 1 and n <= 8 then
-            CortioDB.markerSlot = n
-            print(string.format("|cFF00FFFF[Cortio]|r Slot asignado: %s %s",
-                Cortio.Data:GetRaidIconString(n, 14), Cortio.Data.RAID_ICON_NAMES[n] or tostring(n)))
-            Cortio.Marks:UpdateSecureBtnMacro()
+            InterruptioDB.markerSlot = n
+            print(string.format("|cFF00FFFF[Interruptio]|r Slot asignado: %s %s",
+                Interruptio.Data:GetRaidIconString(n, 14), Interruptio.Data.RAID_ICON_NAMES[n] or tostring(n)))
+            Interruptio.Marks:UpdateSecureBtnMacro()
         elseif n == 0 then
-            CortioDB.markerSlot = 0
-            print("|cFF00FFFF[Cortio]|r Slot en modo automatico.")
-            Cortio.Marks:UpdateSecureBtnMacro()
+            InterruptioDB.markerSlot = 0
+            print("|cFF00FFFF[Interruptio]|r Slot en modo automatico.")
+            Interruptio.Marks:UpdateSecureBtnMacro()
         else
-            local curr = (CortioDB and CortioDB.markerSlot or 0)
-            local currStr = curr > 0 and (Cortio.Data:GetRaidIconString(curr, 14) .. " slot " .. curr) or "automatico"
-            print("|cFF00FFFF[Cortio]|r Uso: /ct slot [1-8] | /ct slot 0 (auto) | actual: " .. currStr)
-            print("|cFF00FFFF[Cortio]|r Slots: 1=Estrella 2=Circulo 3=Diamante 4=Triangulo 5=Luna 6=Cuadrado 7=Cruz 8=Calavera")
+            local curr = (InterruptioDB and InterruptioDB.markerSlot or 0)
+            local currStr = curr > 0 and (Interruptio.Data:GetRaidIconString(curr, 14) .. " slot " .. curr) or "automatico"
+            print("|cFF00FFFF[Interruptio]|r Uso: /it slot [1-8] | /it slot 0 (auto) | actual: " .. currStr)
+            print("|cFF00FFFF[Interruptio]|r Slots: 1=Estrella 2=Circulo 3=Diamante 4=Triangulo 5=Luna 6=Cuadrado 7=Cruz 8=Calavera")
         end
     elseif cmd == "show" then
-        Cortio.UI.Panel:SetAlpha(1)
-        Cortio.UI.Panel:Show()
+        Interruptio.UI.Panel:SetAlpha(1)
+        Interruptio.UI.Panel:Show()
     elseif cmd == "hide" then
-        Cortio.UI.Panel:Hide()
+        Interruptio.UI.Panel:Hide()
     elseif cmd == "reset" then
-        if not CortioDB then CortioDB = {} end
-        CortioDB.scale = 1.0
-        CortioDB.framePoint = nil
-        Cortio.UI.Panel:SetScale(1.0)
-        Cortio.UI.Panel:ClearAllPoints()
-        Cortio.UI.Panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
-        Cortio.UI.Panel:SetAlpha(1)
-        Cortio.UI.Panel:Show()
-        print("|cFF00FFFF[Cortio]|r Panel reiniciado y forzado en pantalla.")
+        if not InterruptioDB then InterruptioDB = {} end
+        InterruptioDB.scale = 1.0
+        InterruptioDB.framePoint = nil
+        Interruptio.UI.Panel:SetScale(1.0)
+        Interruptio.UI.Panel:ClearAllPoints()
+        Interruptio.UI.Panel:SetPoint("TOP", UIParent, "TOP", 0, -120)
+        Interruptio.UI.Panel:SetAlpha(1)
+        Interruptio.UI.Panel:Show()
+        print("|cFF00FFFF[Interruptio]|r Panel reiniciado y forzado en pantalla.")
     elseif cmd == "errors" then
-        if CortioDB and CortioDB.errors and #CortioDB.errors > 0 then
-            print("|cFF00FFFF[Cortio]|r Errores (" .. #CortioDB.errors .. "):")
-            for _, e in ipairs(CortioDB.errors) do
+        if InterruptioDB and InterruptioDB.errors and #InterruptioDB.errors > 0 then
+            print("|cFF00FFFF[Interruptio]|r Errores (" .. #InterruptioDB.errors .. "):")
+            for _, e in ipairs(InterruptioDB.errors) do
                 print("|cFFFF6666  " .. e .. "|r")
             end
         else
-            print("|cFF00FFFF[Cortio]|r Sin errores.")
+            print("|cFF00FFFF[Interruptio]|r Sin errores.")
         end
     elseif cmd == "clearerrors" or cmd == "clear" then
-        if CortioDB then CortioDB.errors = {} end
-        print("|cFF00FFFF[Cortio]|r Errores borrados.")
+        if InterruptioDB then InterruptioDB.errors = {} end
+        print("|cFF00FFFF[Interruptio]|r Errores borrados.")
     elseif cmd == "debug" then
-        print("|cFF00FFFF[Cortio]|r === DEBUG ===")
-        print("  playerName = " .. tostring(Cortio.PlayerName))
+        print("|cFF00FFFF[Interruptio]|r === DEBUG ===")
+        print("  playerName = " .. tostring(Interruptio.PlayerName))
         
         -- Prefix status
         local prefixOk = C_ChatInfo.IsAddonMessagePrefixRegistered and
-            C_ChatInfo.IsAddonMessagePrefixRegistered(Cortio.Data.COMM_PREFIX)
-        print("  prefix '" .. Cortio.Data.COMM_PREFIX .. "' registered = " .. tostring(prefixOk))
+            C_ChatInfo.IsAddonMessagePrefixRegistered(Interruptio.Data.COMM_PREFIX)
+        print("  prefix '" .. Interruptio.Data.COMM_PREFIX .. "' registered = " .. tostring(prefixOk))
         
         -- Network stats
-        local stats = Cortio.Net.Stats
+        local stats = Interruptio.Net.Stats
         print(string.format("  net: sent=%d recv=%d | this min: sent=%d recv=%d",
             stats.sent, stats.received, stats.sentThisMinute, stats.receivedThisMinute))
         print("  lastSendResult = " .. tostring(stats.lastResult)
             .. " (" .. string.format("%.1fs ago", GetTime() - (stats.lastResultTime or 0)) .. ")")
-        print("  queue length = " .. #Cortio.Net.Queue)
+        print("  queue length = " .. #Interruptio.Net.Queue)
         
         -- Panel ticker status
-        print("  panelTicker active = " .. tostring(Cortio.PanelTicker ~= nil))
+        print("  panelTicker active = " .. tostring(Interruptio.PanelTicker ~= nil))
         
         -- Active marks
-        print("  activeMarks (" .. #Cortio.Marks.Active .. "):")
-        for i, m in ipairs(Cortio.Marks.Active) do
+        print("  activeMarks (" .. #Interruptio.Marks.Active .. "):")
+        for i, m in ipairs(Interruptio.Marks.Active) do
             print(string.format("    [%d] player=%s slot=%s class=%s",
                 i, tostring(m.playerName), tostring(m.markerSlot), tostring(m.playerClass)))
         end
         
         -- Roster
-        print("  CortioRoster:")
-        for k, v in pairs(Cortio.RosterList) do
+        print("  InterruptioRoster:")
+        for k, v in pairs(Interruptio.RosterList) do
             print(string.format("    [%s] unit=%s class=%s spec=%s specId=%s guid=%s cdEnd=%.1f",
                 tostring(k), tostring(v.unit), tostring(v.class),
                 tostring(v.specIcon), tostring(v.specId or 0),
@@ -1145,25 +1145,25 @@ SlashCmdList["CORTIO"] = function(msg)
             print("  No messages received yet.")
         end
         
-        print("|cFF00FFFF[Cortio]|r === FIN ===")
+        print("|cFF00FFFF[Interruptio]|r === FIN ===")
     elseif cmd == "debugcl" then
-        if not CortioDB then CortioDB = {} end
-        CortioDB.debugCombatLog = not CortioDB.debugCombatLog
-        if CortioDB.debugCombatLog then
-            print("|cFF00FFFF[Cortio]|r Combat Log debug: |cFF44FF88ON|r (interrupt events will be printed)")
+        if not InterruptioDB then InterruptioDB = {} end
+        InterruptioDB.debugCombatLog = not InterruptioDB.debugCombatLog
+        if InterruptioDB.debugCombatLog then
+            print("|cFF00FFFF[Interruptio]|r Combat Log debug: |cFF44FF88ON|r (interrupt events will be printed)")
         else
-            print("|cFF00FFFF[Cortio]|r Combat Log debug: |cFFFF4444OFF|r")
+            print("|cFF00FFFF[Interruptio]|r Combat Log debug: |cFFFF4444OFF|r")
         end
     elseif cmd == "logs" then
-        if not CortioDB then CortioDB = {} end
-        CortioDB.debugLogs = not CortioDB.debugLogs
-        if CortioDB.debugLogs then
-            print("|cFF00FFFF[Cortio]|r Developer logs: |cFF44FF88ON|r")
+        if not InterruptioDB then InterruptioDB = {} end
+        InterruptioDB.debugLogs = not InterruptioDB.debugLogs
+        if InterruptioDB.debugLogs then
+            print("|cFF00FFFF[Interruptio]|r Developer logs: |cFF44FF88ON|r")
         else
-            print("|cFF00FFFF[Cortio]|r Developer logs: |cFFFF4444OFF|r")
+            print("|cFF00FFFF[Interruptio]|r Developer logs: |cFFFF4444OFF|r")
         end
     else
-        print("|cFF00FFFF[Cortio]|r Opciones: /ct show|hide | /ct debug | /ct debugcl | /ct logs | /ct errors | /ct clear")
-        print("|cFF00FFFF[Cortio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
+        print("|cFF00FFFF[Interruptio]|r Opciones: /it show|hide | /it debug | /it debugcl | /it logs | /it errors | /it clear")
+        print("|cFF00FFFF[Interruptio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end

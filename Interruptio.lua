@@ -1,7 +1,7 @@
-BINDING_HEADER_CORTIO_HEADER = "Cortio - Asignacion de Cortes"
-BINDING_NAME_CLICK_CortioMarkSABT_LeftButton = "Poner/Quitar Marca de Corte"
+BINDING_HEADER_INTERRUPTIO_HEADER = "Interruptio - Asignacion de Cortes"
+BINDING_NAME_CLICK_InterruptioMarkSABT_LeftButton = "Poner/Quitar Marca de Corte"
 
-Cortio = Cortio or {}
+Interruptio = Interruptio or {}
 
 -- Prefix registration moved to PLAYER_ENTERING_WORLD for reliability
 
@@ -9,9 +9,9 @@ Cortio = Cortio or {}
 local blockedFrame = CreateFrame("Frame")
 blockedFrame:RegisterEvent("ADDON_ACTION_BLOCKED")
 blockedFrame:SetScript("OnEvent", function(_, _, addon, func)
-    if addon == "Cortio" then
-        Cortio.Data:LogError("TAINT", "Action blocked: " .. tostring(func))
-        print("|cFF00FFFF[Cortio]|r |cFFFF0000TAINT: Action blocked:|r " .. tostring(func))
+    if addon == "Interruptio" then
+        Interruptio.Data:LogError("TAINT", "Action blocked: " .. tostring(func))
+        print("|cFF00FFFF[Interruptio]|r |cFFFF0000TAINT: Action blocked:|r " .. tostring(func))
     end
 end)
 
@@ -24,7 +24,7 @@ local function FindRosterPlayerByGUIDOrName(sourceGUID, sourceName)
 
     -- 1. GUID match (most reliable — unique per player)
     if sourceGUID then
-        for pName, data in pairs(Cortio.RosterList) do
+        for pName, data in pairs(Interruptio.RosterList) do
             if data.guid and data.guid == sourceGUID then
                 return pName, "GUID"
             end
@@ -33,25 +33,25 @@ local function FindRosterPlayerByGUIDOrName(sourceGUID, sourceName)
 
     -- 2. Exact full name match
     if sourceName then
-        if Cortio.RosterList[sourceName] then
+        if Interruptio.RosterList[sourceName] then
             return sourceName, "FullName"
         end
 
         -- 3. Ambiguate match (handles cross-realm names)
         local ambigSource = Ambiguate(sourceName, "short")
-        if Cortio.RosterList[ambigSource] then
+        if Interruptio.RosterList[ambigSource] then
             return ambigSource, "Ambiguate"
         end
 
         -- 4. Short name match (least reliable, last resort)
-        local shortName = Cortio.Data:ShortName(sourceName)
-        for pName, _ in pairs(Cortio.RosterList) do
+        local shortName = Interruptio.Data:ShortName(sourceName)
+        for pName, _ in pairs(Interruptio.RosterList) do
             if Ambiguate(pName, "short") == ambigSource then
                 return pName, "AmbiguateLoop"
             end
         end
-        for pName, _ in pairs(Cortio.RosterList) do
-            if Cortio.Data:ShortName(pName) == shortName then
+        for pName, _ in pairs(Interruptio.RosterList) do
+            if Interruptio.Data:ShortName(pName) == shortName then
                 return pName, "ShortName"
             end
         end
@@ -66,14 +66,14 @@ local function FindRosterPlayer(sender)
     return player
 end
 
--- Debug toggle (enable with CortioDB.debugCombatLog = true or /ct debugcl)
+-- Debug toggle (enable with InterruptioDB.debugCombatLog = true or /it debugcl)
 local function DebugCL(...)
-    if not CortioDB or not CortioDB.debugCombatLog then return end
+    if not InterruptioDB or not InterruptioDB.debugCombatLog then return end
     local parts = {}
     for i = 1, select("#", ...) do
         parts[i] = tostring(select(i, ...))
     end
-    print("|cFF00FFFF[Cortio]|r |cFFAADDFF[CL]|r " .. table.concat(parts, " "))
+    print("|cFF00FFFF[Interruptio]|r |cFFAADDFF[CL]|r " .. table.concat(parts, " "))
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -93,97 +93,97 @@ eventFrame:RegisterEvent("RAID_TARGET_UPDATE")
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
 
     if event == "PLAYER_ENTERING_WORLD" then
-        Cortio.Roster:EnsurePlayerInfo()
+        Interruptio.Roster:EnsurePlayerInfo()
         
         -- Register addon message prefix (verified at each zone load)
-        if not C_ChatInfo.IsAddonMessagePrefixRegistered(Cortio.Data.COMM_PREFIX) then
-            local regOk = C_ChatInfo.RegisterAddonMessagePrefix(Cortio.Data.COMM_PREFIX)
+        if not C_ChatInfo.IsAddonMessagePrefixRegistered(Interruptio.Data.COMM_PREFIX) then
+            local regOk = C_ChatInfo.RegisterAddonMessagePrefix(Interruptio.Data.COMM_PREFIX)
             if not regOk then
                 C_Timer.After(2, function()
-                    C_ChatInfo.RegisterAddonMessagePrefix(Cortio.Data.COMM_PREFIX)
+                    C_ChatInfo.RegisterAddonMessagePrefix(Interruptio.Data.COMM_PREFIX)
                 end)
             end
         end
         
-        Cortio.Marks.Active = {}
-        for unit, _ in pairs(Cortio.UI.ActiveNameplates) do
-            Cortio.UI:ReleaseNameplateFrame(unit)
+        Interruptio.Marks.Active = {}
+        for unit, _ in pairs(Interruptio.UI.ActiveNameplates) do
+            Interruptio.UI:ReleaseNameplateFrame(unit)
         end
         
-        if not CortioDB then CortioDB = {} end
-        if not CortioDB.errors then CortioDB.errors = {} end
+        if not InterruptioDB then InterruptioDB = {} end
+        if not InterruptioDB.errors then InterruptioDB.errors = {} end
         
-        Cortio.Roster:RebuildWithRetry()
-        Cortio.Roster:AutoRegisterByClass()
-        Cortio.Roster:RegisterPartyWatchers()
-        Cortio.Marks:QueueSecureBtnUpdate()
+        Interruptio.Roster:RebuildWithRetry()
+        Interruptio.Roster:AutoRegisterByClass()
+        Interruptio.Roster:RegisterPartyWatchers()
+        Interruptio.Marks:QueueSecureBtnUpdate()
         
-        C_Timer.After(1, function() Cortio.Roster:AutoRegisterByClass(); Cortio.Roster:RegisterPartyWatchers() end)
-        C_Timer.After(2, function() Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
-        C_Timer.After(3, function() Cortio.Roster:AutoRegisterByClass(); Cortio.Roster:RegisterPartyWatchers(); Cortio.UI:UpdatePanel() end)
-        C_Timer.After(5, function() Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
+        C_Timer.After(1, function() Interruptio.Roster:AutoRegisterByClass(); Interruptio.Roster:RegisterPartyWatchers() end)
+        C_Timer.After(2, function() Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
+        C_Timer.After(3, function() Interruptio.Roster:AutoRegisterByClass(); Interruptio.Roster:RegisterPartyWatchers(); Interruptio.UI:UpdatePanel() end)
+        C_Timer.After(5, function() Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
         
-        Cortio.UI:SetupKickIcon()
+        Interruptio.UI:SetupKickIcon()
         
         C_Timer.After(0.5, function()
-            if CortioDB and CortioDB.scale then Cortio.UI.Panel:SetScale(CortioDB.scale) end
-            Cortio.UI:CreateSettingsMenu()
+            if InterruptioDB and InterruptioDB.scale then Interruptio.UI.Panel:SetScale(InterruptioDB.scale) end
+            Interruptio.UI:CreateSettingsMenu()
         end)
         
     elseif event == "PLAYER_REGEN_ENABLED" then
-        Cortio.Marks:QueueSecureBtnUpdate()
+        Interruptio.Marks:QueueSecureBtnUpdate()
         
     elseif event == "NAME_PLATE_UNIT_ADDED" or event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
-        Cortio.UI:UpdateNameplate(arg1)
+        Interruptio.UI:UpdateNameplate(arg1)
     elseif event == "NAME_PLATE_UNIT_REMOVED" or event == "FORBIDDEN_NAME_PLATE_UNIT_REMOVED" then
-        for _, mark in ipairs(Cortio.Marks.Active) do
+        for _, mark in ipairs(Interruptio.Marks.Active) do
             if mark.nameplateUnit == arg1 then
                 mark.nameplateUnit = nil
             end
         end
-        Cortio.UI:ReleaseNameplateFrame(arg1)
+        Interruptio.UI:ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
-        Cortio.SetActive(not IsInRaid())
-        if not Cortio._active then return end
-        Cortio.Roster:Rebuild()
-        Cortio.Roster:AutoRegisterByClass()
-        Cortio.Roster:RegisterPartyWatchers()
-        Cortio.RegisterPartyInterruptWatchers()
-        Cortio.UI:UpdatePanel()
+        Interruptio.SetActive(not IsInRaid())
+        if not Interruptio._active then return end
+        Interruptio.Roster:Rebuild()
+        Interruptio.Roster:AutoRegisterByClass()
+        Interruptio.Roster:RegisterPartyWatchers()
+        Interruptio.RegisterPartyInterruptWatchers()
+        Interruptio.UI:UpdatePanel()
         if not InCombatLockdown() then
-            Cortio.Marks:QueueSecureBtnUpdate()
+            Interruptio.Marks:QueueSecureBtnUpdate()
         end
         C_Timer.After(1, function()
-            if not Cortio._active then return end
-            Cortio.Roster:RegisterPartyWatchers()
-            Cortio.Roster:AutoRegisterByClass()
-            Cortio.RegisterPartyInterruptWatchers()
-            Cortio.UI:UpdatePanel()
-            Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
+            if not Interruptio._active then return end
+            Interruptio.Roster:RegisterPartyWatchers()
+            Interruptio.Roster:AutoRegisterByClass()
+            Interruptio.RegisterPartyInterruptWatchers()
+            Interruptio.UI:UpdatePanel()
+            Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
         end)
         C_Timer.After(3, function()
-            if not Cortio._active then return end
-            Cortio.Roster:RegisterPartyWatchers()
-            Cortio.Roster:AutoRegisterByClass()
-            Cortio.RegisterPartyInterruptWatchers()
+            if not Interruptio._active then return end
+            Interruptio.Roster:RegisterPartyWatchers()
+            Interruptio.Roster:AutoRegisterByClass()
+            Interruptio.RegisterPartyInterruptWatchers()
         end)
 
 
         
     elseif event == "INSPECT_READY" then
-        Cortio.Roster:OnInspectReady(arg1)
+        Interruptio.Roster:OnInspectReady(arg1)
 
     elseif event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
-        Cortio.Roster:Rebuild()
-        Cortio.Roster:AutoRegisterByClass()
-        Cortio.UI:UpdatePanel()
-        Cortio.UI:SetupKickIcon()
+        Interruptio.Roster:Rebuild()
+        Interruptio.Roster:AutoRegisterByClass()
+        Interruptio.UI:UpdatePanel()
+        Interruptio.UI:SetupKickIcon()
 
     elseif event == "RAID_TARGET_UPDATE" then
         -- Raid marker icons changed on mobs — refresh nameplate matching
-        Cortio.Data:SafeCall("RaidTargetUpdate", function()
-            Cortio.UI:UpdateAllNameplates()
+        Interruptio.Data:SafeCall("RaidTargetUpdate", function()
+            Interruptio.UI:UpdateAllNameplates()
         end)
 
     elseif event == "UNIT_DIED" then
@@ -191,45 +191,45 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         local ok, isTargetStr = pcall(function() return arg1 == "target" end)
         isTargetStr = ok and isTargetStr
         
-        for i = #Cortio.Marks.Active, 1, -1 do
-            local mark = Cortio.Marks.Active[i]
+        for i = #Interruptio.Marks.Active, 1, -1 do
+            local mark = Interruptio.Marks.Active[i]
             local shouldClear = false
 
             if mark.nameplateUnit then
-                if Cortio.Taint:SafeIsMatch(mark.nameplateUnit, arg1) then
+                if Interruptio.Taint:SafeIsMatch(mark.nameplateUnit, arg1) then
                     shouldClear = true
                 end
             end
 
-            if not shouldClear and mark.playerName == Cortio.PlayerName and not mark.nameplateUnit then
-                if isTargetStr or Cortio.Taint:SafeIsMatch(arg1, "target") then
+            if not shouldClear and mark.playerName == Interruptio.PlayerName and not mark.nameplateUnit then
+                if isTargetStr or Interruptio.Taint:SafeIsMatch(arg1, "target") then
                     shouldClear = true
                 end
             end
 
             if shouldClear then
-                if mark.playerName == Cortio.PlayerName then
-                    Cortio.Net:SendGroupMessage("V1|UNMARK", "Send")
+                if mark.playerName == Interruptio.PlayerName then
+                    Interruptio.Net:SendGroupMessage("V1|UNMARK", "Send")
                 end
-                table.remove(Cortio.Marks.Active, i)
+                table.remove(Interruptio.Marks.Active, i)
                 cleared = true
             end
         end
-        if cleared then Cortio.UI:UpdatePanel() end
+        if cleared then Interruptio.UI:UpdatePanel() end
         
     elseif event == "CHAT_MSG_ADDON" then
-        if arg1 == Cortio.Data.COMM_PREFIX then
+        if arg1 == Interruptio.Data.COMM_PREFIX then
             local _, sender = ...
-            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00ADDON_MSG|r prefix=" .. tostring(arg1) .. " msg=" .. tostring(arg2) .. " sender=" .. tostring(sender)) end
+            if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00ADDON_MSG|r prefix=" .. tostring(arg1) .. " msg=" .. tostring(arg2) .. " sender=" .. tostring(sender)) end
             if not sender then return end
             local ambigSender = Ambiguate(sender, "short")
-            local ambigPlayer = Cortio.PlayerName and Ambiguate(Cortio.PlayerName, "short") or ""
-            if sender == Cortio.PlayerName or ambigSender == ambigPlayer then
-                if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r ADDON_MSG filtered (self): " .. tostring(sender)) end
+            local ambigPlayer = Interruptio.PlayerName and Ambiguate(Interruptio.PlayerName, "short") or ""
+            if sender == Interruptio.PlayerName or ambigSender == ambigPlayer then
+                if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r ADDON_MSG filtered (self): " .. tostring(sender)) end
                 return
             end
             
-            Cortio.Net:LogReceived(arg1, arg2, sender)
+            Interruptio.Net:LogReceived(arg1, arg2, sender)
             
             -- V1 protocol uses | separator; legacy uses :
             local version, action, p2, p3, p4, p5, p6
@@ -241,28 +241,28 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             local rPlayer = FindRosterPlayer(sender) or sender
             
             if action == "SYNCREQ" then
-                C_Timer.After(0.5 + math.random() * 1.5, function() Cortio.Marks:BroadcastCurrentMark() end)
+                C_Timer.After(0.5 + math.random() * 1.5, function() Interruptio.Marks:BroadcastCurrentMark() end)
             elseif action == "CD" then
                 local cdDuration = tonumber(p2)
-                if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFFFF00CD RECEIVED|r from=" .. tostring(rPlayer) .. " dur=" .. tostring(cdDuration) .. " inRoster=" .. tostring(Cortio.RosterList[rPlayer] ~= nil)) end
+                if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFFFFF00CD RECEIVED|r from=" .. tostring(rPlayer) .. " dur=" .. tostring(cdDuration) .. " inRoster=" .. tostring(Interruptio.RosterList[rPlayer] ~= nil)) end
                 if cdDuration and cdDuration > 0 then
-                    Cortio.Data:SafeCall("Remote_CD", function()
+                    Interruptio.Data:SafeCall("Remote_CD", function()
                         local now = GetTime()
-                        for _, mark in ipairs(Cortio.Marks.Active) do
+                        for _, mark in ipairs(Interruptio.Marks.Active) do
                             if mark.playerName == rPlayer then
                                 mark.remoteCDEnd = now + cdDuration
                                 mark.remoteCDDuration = cdDuration
                             end
                         end
-                        if Cortio.RosterList[rPlayer] then
-                            Cortio.RosterList[rPlayer].cdEnd = now + cdDuration
-                            Cortio.RosterList[rPlayer].cdTotal = cdDuration
-                            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00CD SET|r " .. rPlayer .. " cdEnd=" .. string.format("%.1f", now + cdDuration) .. " total=" .. cdDuration) end
+                        if Interruptio.RosterList[rPlayer] then
+                            Interruptio.RosterList[rPlayer].cdEnd = now + cdDuration
+                            Interruptio.RosterList[rPlayer].cdTotal = cdDuration
+                            if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00CD SET|r " .. rPlayer .. " cdEnd=" .. string.format("%.1f", now + cdDuration) .. " total=" .. cdDuration) end
                         else
-                            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF0000CD FAIL|r player '" .. rPlayer .. "' NOT in RosterList") end
+                            if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFFF0000CD FAIL|r player '" .. rPlayer .. "' NOT in RosterList") end
                         end
-                        Cortio.UI:UpdatePanel()
-                        Cortio.StartPanelTicker()
+                        Interruptio.UI:UpdatePanel()
+                        Interruptio.StartPanelTicker()
                     end)
                 end
             elseif action and p2 and p3 then
@@ -271,15 +271,15 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                 local mId = markIdStr and tonumber(markIdStr) or nil
                 local markerSlot = markerSlotStr and tonumber(markerSlotStr) or 0
                 if action == "MARK" then
-                    Cortio.Marks:ClearPlayerMark(rPlayer)
+                    Interruptio.Marks:ClearPlayerMark(rPlayer)
 
-                    local ourSlotBefore = Cortio.Marks:GetPlayerMarkerSlotSafe()
+                    local ourSlotBefore = Interruptio.Marks:GetPlayerMarkerSlotSafe()
 
                     local uToken = nil
                     for i = 1, 4 do
                         local u = "party" .. i
                         if UnitExists(u) then
-                            if Cortio.RosterList[rPlayer] and Cortio.RosterList[rPlayer].unit == u then
+                            if Interruptio.RosterList[rPlayer] and Interruptio.RosterList[rPlayer].unit == u then
                                 uToken = u .. "target"
                                 break
                             end
@@ -312,17 +312,17 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
                         unitToken = uToken,
                         markerSlot = markerSlot
                     }
-                    table.insert(Cortio.Marks.Active, newMark)
+                    table.insert(Interruptio.Marks.Active, newMark)
 
-                    local ourSlotFixed = not CortioDB or (CortioDB.markerSlot or 0) == 0
+                    local ourSlotFixed = not InterruptioDB or (InterruptioDB.markerSlot or 0) == 0
                     if ourSlotFixed and markerSlot > 0 and markerSlot == ourSlotBefore then
-                        Cortio.Marks:QueueSecureBtnUpdate()
+                        Interruptio.Marks:QueueSecureBtnUpdate()
                     end
                 elseif action == "UNMARK" then
-                    Cortio.Marks:ClearPlayerMark(rPlayer)
+                    Interruptio.Marks:ClearPlayerMark(rPlayer)
                 end
-                Cortio.UI:UpdatePanel()
-                Cortio.UI:UpdateAllNameplates()
+                Interruptio.UI:UpdatePanel()
+                Interruptio.UI:UpdateAllNameplates()
             end
     end
     end
@@ -354,24 +354,24 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     local ok2 = pcall(rawset, {}, cleanText, true)
     if not ok2 then return end
     
-    -- Parse macro format: "[Cortio] Assigned {rt8} (Annarya)"
-    local slotStr, playerName = string.match(cleanText, "%[Cortio%] Assigned %{rt(%d+)%} %((.-)%)")
+    -- Parse macro format: "[Interruptio] Assigned {rt8} (Annarya)"
+    local slotStr, playerName = string.match(cleanText, "%[Interruptio%] Assigned %{rt(%d+)%} %((.-)%)")
     if not slotStr or not playerName then return end
     
     local slot = tonumber(slotStr)
     if not slot or slot <= 0 then return end
     
-    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF88FF[CHAT SYNC]|r Received mark: {rt" .. slot .. "} → " .. playerName) end
+    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFFF88FF[CHAT SYNC]|r Received mark: {rt" .. slot .. "} → " .. playerName) end
     
     -- Don't skip own messages — we need self-consistency.
     -- But DO skip if we already processed this mark locally.
-    local myShort = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or ""
+    local myShort = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or ""
     
     -- Find player in roster (try multiple match strategies)
     local rPlayer = nil
-    if Cortio.RosterList then
-        for rName, _ in pairs(Cortio.RosterList) do
-            local short = Cortio.Data:ShortName(rName)
+    if Interruptio.RosterList then
+        for rName, _ in pairs(Interruptio.RosterList) do
+            local short = Interruptio.Data:ShortName(rName)
             if short == playerName then
                 rPlayer = rName
                 break
@@ -379,7 +379,7 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
         end
         -- Fallback: try Ambiguate
         if not rPlayer then
-            for rName, _ in pairs(Cortio.RosterList) do
+            for rName, _ in pairs(Interruptio.RosterList) do
                 if Ambiguate(rName, "short") == playerName then
                     rPlayer = rName
                     break
@@ -389,17 +389,17 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     end
     
     if not rPlayer then
-        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF8800[CHAT SYNC]|r Player '" .. playerName .. "' not in roster") end
+        if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFFF8800[CHAT SYNC]|r Player '" .. playerName .. "' not in roster") end
         return
     end
     
-    if not Cortio.RosterList[rPlayer] then return end
+    if not Interruptio.RosterList[rPlayer] then return end
     
     -- Skip if this is our own mark (we already processed it locally)
-    local short = Cortio.Data:ShortName(rPlayer)
+    local short = Interruptio.Data:ShortName(rPlayer)
     if short == myShort then return end
     
-    Cortio.Marks:ClearPlayerMark(rPlayer)
+    Interruptio.Marks:ClearPlayerMark(rPlayer)
     
     local uToken = nil
     for i = 1, 4 do
@@ -415,8 +415,8 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
         end
     end
     
-    local rClass = Cortio.RosterList[rPlayer].class or "UNKNOWN"
-    table.insert(Cortio.Marks.Active, {
+    local rClass = Interruptio.RosterList[rPlayer].class or "UNKNOWN"
+    table.insert(Interruptio.Marks.Active, {
         playerName = rPlayer,
         playerClass = rClass,
         specIcon = "0", 
@@ -427,9 +427,9 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
         markerSlot = slot
     })
     
-    Cortio.UI:UpdatePanel()
-    Cortio.UI:UpdateAllNameplates()
-    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00[CHAT SYNC]|r ✓ Assigned {rt" .. slot .. "} to " .. rPlayer) end
+    Interruptio.UI:UpdatePanel()
+    Interruptio.UI:UpdateAllNameplates()
+    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00[CHAT SYNC]|r ✓ Assigned {rt" .. slot .. "} to " .. rPlayer) end
 end)
 
 -- ============================================================
@@ -515,38 +515,38 @@ local function TriggerPartyCooldown(unit, memberName)
     if not matchedPlayer then
         local okG, guid = pcall(UnitGUID, unit)
         local okCls, _, engClass = pcall(UnitClass, unit)
-        if okCls and engClass and Cortio.Data.CLASS_INTERRUPT_SPELLID[engClass] then
-            Cortio.RosterList[memberName] = {
+        if okCls and engClass and Interruptio.Data.CLASS_INTERRUPT_SPELLID[engClass] then
+            Interruptio.RosterList[memberName] = {
                 unit = unit, guid = (okG and guid) or nil, class = engClass,
                 specIcon = "0", specId = 0, cdEnd = 0, cdTotal = 0, lastResult = nil,
             }
             matchedPlayer = memberName
-            if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL|r Auto-registered: " .. memberName .. " class=" .. engClass) end
+            if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00SIGNAL|r Auto-registered: " .. memberName .. " class=" .. engClass) end
         end
     end
 
     if not matchedPlayer then return end
 
-    local rosterData = Cortio.RosterList[matchedPlayer]
+    local rosterData = Interruptio.RosterList[matchedPlayer]
     if not rosterData then return end
 
     -- Compute cooldown
     local cdTotal
-    if rosterData.specId and rosterData.specId > 0 and Cortio.Data.SPEC_INTERRUPTS then
-        local specData = Cortio.Data.SPEC_INTERRUPTS[rosterData.specId]
+    if rosterData.specId and rosterData.specId > 0 and Interruptio.Data.SPEC_INTERRUPTS then
+        local specData = Interruptio.Data.SPEC_INTERRUPTS[rosterData.specId]
         if specData then cdTotal = specData.baseCD end
     end
-    if not cdTotal then cdTotal = Cortio.Data:GetClassInterruptCD(rosterData.class) or 15 end
+    if not cdTotal then cdTotal = Interruptio.Data:GetClassInterruptCD(rosterData.class) or 15 end
 
     local now = GetTime()
     rosterData.cdEnd = now + cdTotal
     rosterData.cdTotal = cdTotal
     rosterData.lastResult = "USED"
 
-    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00SIGNAL MATCH|r " .. matchedPlayer .. " interrupted! cd=" .. cdTotal .. "s") end
+    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00SIGNAL MATCH|r " .. matchedPlayer .. " interrupted! cd=" .. cdTotal .. "s") end
 
-    if Cortio.UI then Cortio.UI:UpdatePanel() end
-    Cortio.StartPanelTicker()
+    if Interruptio.UI then Interruptio.UI:UpdatePanel() end
+    Interruptio.StartPanelTicker()
 end
 
 local function CorrelateSignals()
@@ -625,7 +625,7 @@ local function CorrelateSignals()
             TriggerPartyCooldown(ownerUnit, memberName)
         end
 
-        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF88FFAA[CORR]|r matched cast(" .. tostring(bestCast.unit) .. ") ↔ interrupt(" .. tostring(freshest.unit) .. ") Δ=" .. string.format("%.3f", bestDiff) .. "s") end
+        if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF88FFAA[CORR]|r matched cast(" .. tostring(bestCast.unit) .. ") ↔ interrupt(" .. tostring(freshest.unit) .. ") Δ=" .. string.format("%.3f", bestDiff) .. "s") end
     end
 
     needsCorrelation = false
@@ -638,26 +638,26 @@ end
 local _interruptFrame = CreateFrame("Frame")
 
 -- ============================================================
--- Cortio.SetActive: single point of control for raid disable
+-- Interruptio.SetActive: single point of control for raid disable
 -- Registers/unregisters events instead of checking IsInRaid()
 -- every frame — zero CPU overhead when inactive.
 -- ============================================================
-Cortio._active = false
-function Cortio.SetActive(active)
-    if active == Cortio._active then return end
-    Cortio._active = active
+Interruptio._active = false
+function Interruptio.SetActive(active)
+    if active == Interruptio._active then return end
+    Interruptio._active = active
     if active then
         _interruptFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
         _interruptFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
         _interruptFrame:RegisterEvent("UNIT_AURA")
     else
         _interruptFrame:UnregisterAllEvents()
-        if Cortio.UI and Cortio.UI.Panel then Cortio.UI.Panel:Hide() end
-        if Cortio.PanelTicker then Cortio.PanelTicker:Cancel(); Cortio.PanelTicker = nil end
+        if Interruptio.UI and Interruptio.UI.Panel then Interruptio.UI.Panel:Hide() end
+        if Interruptio.PanelTicker then Interruptio.PanelTicker:Cancel(); Interruptio.PanelTicker = nil end
     end
 end
 -- Start active (solo/party). GROUP_ROSTER_UPDATE will deactivate in raids.
-Cortio.SetActive(true)
+Interruptio.SetActive(true)
 
 _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -669,17 +669,17 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         if unit == "player" or unit == "pet" then
             local _, spellID = ...
             if spellID then
-                local spellName = Cortio.Taint:SafeResolveSpell(spellID)
-                if spellName and Cortio.Data.INTERRUPT_NAME_TO_CD[spellName] then
+                local spellName = Interruptio.Taint:SafeResolveSpell(spellID)
+                if spellName and Interruptio.Data.INTERRUPT_NAME_TO_CD[spellName] then
                     -- Push signal for correlation (confirms success if nameplate fires too)
                     PushSignal("cast", "player")
                     
                     -- DIRECT CD update (like BliZzi's OnOwnKick)
-                    local cdDur = Cortio.Data.INTERRUPT_NAME_TO_CD[spellName]
+                    local cdDur = Interruptio.Data.INTERRUPT_NAME_TO_CD[spellName]
                     local now = GetTime()
                     local playerName = UnitName("player")
-                    if playerName and Cortio.RosterList then
-                        for rName, rData in pairs(Cortio.RosterList) do
+                    if playerName and Interruptio.RosterList then
+                        for rName, rData in pairs(Interruptio.RosterList) do
                             local short = strsplit("-", rName) or rName
                             if short == playerName or rName == playerName then
                                 rData.cdEnd = now + cdDur
@@ -689,14 +689,14 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                             end
                         end
                     end
-                    if Cortio.UI then Cortio.UI:UpdatePanel() end
-                    Cortio.StartPanelTicker()
-                    pcall(Cortio.UI.UpdateKickCooldown, Cortio.UI)
+                    if Interruptio.UI then Interruptio.UI:UpdatePanel() end
+                    Interruptio.StartPanelTicker()
+                    pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
                     
                     -- Broadcast to party
-                    Cortio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
+                    Interruptio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
                     
-                    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00OWN KICK|r " .. spellName .. " cd=" .. cdDur .. "s") end
+                    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00OWN KICK|r " .. spellName .. " cd=" .. cdDur .. "s") end
                 end
             end
             return
@@ -712,10 +712,10 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         local _, spellID = ...
         local spellName = nil
         if spellID then
-            spellName = Cortio.Taint:SafeResolveSpell(spellID)
+            spellName = Interruptio.Taint:SafeResolveSpell(spellID)
         end
 
-        if spellName and Cortio.Data.INTERRUPT_NAME_TO_CD[spellName] then
+        if spellName and Interruptio.Data.INTERRUPT_NAME_TO_CD[spellName] then
             -- Clean spell name resolved → push signal for correlation
             PushSignal("cast", unit)
         else
@@ -730,11 +730,11 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                 end
             end
             if matchedPlayer then
-                local rosterData = Cortio.RosterList[matchedPlayer]
+                local rosterData = Interruptio.RosterList[matchedPlayer]
                 if rosterData then
                     local isOnCD = rosterData.cdEnd and rosterData.cdEnd > GetTime()
                     if not isOnCD then
-                        local sid = Cortio.Data.CLASS_INTERRUPT_SPELLID[rosterData.class]
+                        local sid = Interruptio.Data.CLASS_INTERRUPT_SPELLID[rosterData.class]
                         if sid then
                             PushSignal("cast", unit)
                         end
@@ -776,7 +776,7 @@ local _cleanLastBroadcastTime = 0
 
 C_Timer.After(3, function()
     C_Timer.NewTicker(0.3, function()
-        if not Cortio._active then return end
+        if not Interruptio._active then return end
 
         -- Get player info from CLEAN sources
         local playerName = UnitName("player")
@@ -784,7 +784,7 @@ C_Timer.After(3, function()
         if not playerName or not playerClass then return end
         
         -- Get the interrupt spell ID from STATIC table (clean data)
-        local interruptSpellID = Cortio.Data.CLASS_INTERRUPT_SPELLID[playerClass]
+        local interruptSpellID = Interruptio.Data.CLASS_INTERRUPT_SPELLID[playerClass]
         if not interruptSpellID then return end
         
         -- Check the cooldown of OUR OWN interrupt (clean API call with clean spellID)
@@ -814,8 +814,8 @@ C_Timer.After(3, function()
                 local cdDur = math.floor(cleanDur + 0.5)
                 
                 -- === UPDATE LOCAL UI ===
-                if Cortio.RosterList then
-                    for rName, rData in pairs(Cortio.RosterList) do
+                if Interruptio.RosterList then
+                    for rName, rData in pairs(Interruptio.RosterList) do
                         local short = strsplit("-", rName) or rName
                         if short == playerName or rName == playerName then
                             rData.cdEnd = now + cdDur
@@ -824,63 +824,63 @@ C_Timer.After(3, function()
                         end
                     end
                 end
-                Cortio.UI:UpdatePanel()
-                Cortio.StartPanelTicker()
-                pcall(Cortio.UI.UpdateKickCooldown, Cortio.UI)
+                Interruptio.UI:UpdatePanel()
+                Interruptio.StartPanelTicker()
+                pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
                 
                 -- === BROADCAST via SendAddonMessage (keep trying, might work outside instances) ===
-                Cortio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
+                Interruptio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
                 
-                if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00CLEAN INTERRUPT|r CD=" .. cdDur .. "s") end
+                if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00CLEAN INTERRUPT|r CD=" .. cdDur .. "s") end
             end
         end
     end)
 end)
 
 -- RegisterPartyInterruptWatchers: no-op (Signal Correlation handles everything)
-function Cortio.RegisterPartyInterruptWatchers() end
+function Interruptio.RegisterPartyInterruptWatchers() end
 
 
 -- Smart panel ticker: only runs when CDs are active
-Cortio.PanelTicker = nil
+Interruptio.PanelTicker = nil
 
-function Cortio.StartPanelTicker()
-    if Cortio.PanelTicker then return end
-    Cortio.PanelTicker = C_Timer.NewTicker(0.25, function()
-        if Cortio.UI.Panel and Cortio.UI.Panel:IsShown() then
-            Cortio.UI:UpdatePanel()
+function Interruptio.StartPanelTicker()
+    if Interruptio.PanelTicker then return end
+    Interruptio.PanelTicker = C_Timer.NewTicker(0.25, function()
+        if Interruptio.UI.Panel and Interruptio.UI.Panel:IsShown() then
+            Interruptio.UI:UpdatePanel()
         end
-        Cortio.UI:UpdateAllNameplates()
+        Interruptio.UI:UpdateAllNameplates()
         
         local hasWork = false
         local now = GetTime()
-        for _, data in pairs(Cortio.RosterList) do
+        for _, data in pairs(Interruptio.RosterList) do
             if data.cdEnd and data.cdEnd > now then
                 hasWork = true
                 break
             end
         end
         if not hasWork then
-            for _ in pairs(Cortio.UI.ActiveNameplates) do
+            for _ in pairs(Interruptio.UI.ActiveNameplates) do
                 hasWork = true
                 break
             end
         end
-        if not hasWork and not (Cortio.UI.Panel and Cortio.UI.Panel:IsShown()) then
-            Cortio.PanelTicker:Cancel()
-            Cortio.PanelTicker = nil
+        if not hasWork and not (Interruptio.UI.Panel and Interruptio.UI.Panel:IsShown()) then
+            Interruptio.PanelTicker:Cancel()
+            Interruptio.PanelTicker = nil
         end
     end)
 end
 
-hooksecurefunc(Cortio.UI, "UpdatePanel", function()
+hooksecurefunc(Interruptio.UI, "UpdatePanel", function()
     local now = GetTime()
-    for _, data in pairs(Cortio.RosterList) do
+    for _, data in pairs(Interruptio.RosterList) do
         if data.cdEnd and data.cdEnd > now then
-            Cortio.StartPanelTicker()
+            Interruptio.StartPanelTicker()
             return
         end
     end
 end)
 
-print("|cFF00FFFF[Cortio]|r Cargado. Asigna la tecla en: ESC -> Atajos -> AddOns -> Cortio")
+print("|cFF00FFFF[Interruptio]|r Cargado. Asigna la tecla en: ESC -> Atajos -> AddOns -> Interruptio")

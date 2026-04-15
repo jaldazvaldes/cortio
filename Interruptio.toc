@@ -1,0 +1,14 @@
+## Interface: 120000
+## Title: Interruptio
+## Notes: Asistente de cortes para World of Warcraft
+## Author: yeye
+## Version: 1.0
+## SavedVariables: InterruptioDB
+
+InterruptioTaint.lua
+InterruptioData.lua
+InterruptioNet.lua
+InterruptioRoster.lua
+InterruptioMarks.lua
+InterruptioUI.lua
+Interruptio.lua

@@ -1,12 +1,12 @@
 --------------------------------------------------------------
--- CORTIO - Network Queue
+-- INTERRUPTIO - Network Queue
 -- Rate-limited addon message system with backoff/retry
 --------------------------------------------------------------
-Cortio = Cortio or {}
-Cortio.Net = {}
+Interruptio = Interruptio or {}
+Interruptio.Net = {}
 
-Cortio.Net.Queue = {}
-Cortio.Net.Stats = {
+Interruptio.Net.Queue = {}
+Interruptio.Net.Stats = {
     sent = 0,
     received = 0,
     lastResult = nil,
@@ -21,22 +21,22 @@ local SEND_INTERVAL = 0.1   -- max 10 msgs/sec
 local MAX_RETRIES = 3
 local netTicker = nil
 
-function Cortio.Net:LogReceived(prefix, msg, sender)
+function Interruptio.Net:LogReceived(prefix, msg, sender)
     local entry = {
         time = date("%H:%M:%S"),
         msg = msg,
         sender = sender,
     }
-    table.insert(Cortio.Net.Stats.recentMessages, entry)
-    while #Cortio.Net.Stats.recentMessages > MAX_RECENT_MSGS do
-        table.remove(Cortio.Net.Stats.recentMessages, 1)
+    table.insert(Interruptio.Net.Stats.recentMessages, entry)
+    while #Interruptio.Net.Stats.recentMessages > MAX_RECENT_MSGS do
+        table.remove(Interruptio.Net.Stats.recentMessages, 1)
     end
-    Cortio.Net.Stats.received = Cortio.Net.Stats.received + 1
-    Cortio.Net.Stats.receivedThisMinute = Cortio.Net.Stats.receivedThisMinute + 1
+    Interruptio.Net.Stats.received = Interruptio.Net.Stats.received + 1
+    Interruptio.Net.Stats.receivedThisMinute = Interruptio.Net.Stats.receivedThisMinute + 1
 end
 
 local function ProcessQueue()
-    if #Cortio.Net.Queue == 0 then
+    if #Interruptio.Net.Queue == 0 then
         if netTicker then
             netTicker:Cancel()
             netTicker = nil
@@ -44,7 +44,7 @@ local function ProcessQueue()
         return
     end
 
-    local job = table.remove(Cortio.Net.Queue, 1)
+    local job = table.remove(Interruptio.Net.Queue, 1)
 
     local ok, result
     if job.target then
@@ -53,16 +53,16 @@ local function ProcessQueue()
         ok, result = pcall(C_ChatInfo.SendAddonMessage, job.prefix, job.msg, job.channel)
     end
 
-    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFAAAAAA[NET]|r SEND ch=" .. tostring(job.channel) .. " msg=" .. tostring(job.msg) .. " ok=" .. tostring(ok) .. " result=" .. tostring(result)) end
+    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFAAAAAA[NET]|r SEND ch=" .. tostring(job.channel) .. " msg=" .. tostring(job.msg) .. " ok=" .. tostring(ok) .. " result=" .. tostring(result)) end
 
-    Cortio.Net.Stats.lastResult = ok and result or ("ERROR: " .. tostring(result))
-    Cortio.Net.Stats.lastResultTime = GetTime()
+    Interruptio.Net.Stats.lastResult = ok and result or ("ERROR: " .. tostring(result))
+    Interruptio.Net.Stats.lastResultTime = GetTime()
 
     if ok and (result == nil or result == 0) then
         -- Success
-        Cortio.Net.addonMsgBlocked = false
-        Cortio.Net.Stats.sent = Cortio.Net.Stats.sent + 1
-        Cortio.Net.Stats.sentThisMinute = Cortio.Net.Stats.sentThisMinute + 1
+        Interruptio.Net.addonMsgBlocked = false
+        Interruptio.Net.Stats.sent = Interruptio.Net.Stats.sent + 1
+        Interruptio.Net.Stats.sentThisMinute = Interruptio.Net.Stats.sentThisMinute + 1
     elseif ok and result then
         local retries = job.retries or 0
 
@@ -70,55 +70,55 @@ local function ProcessQueue()
             -- Addon Message Lockdown (M+ instances block ALL channels).
             -- This is EXPECTED — do NOT retry, do NOT fallback to WHISPER.
             -- Marker sync works via /p chat macro instead.
-            Cortio.Net.addonMsgBlocked = true
+            Interruptio.Net.addonMsgBlocked = true
             -- Silent: no error log, no retry
         elseif result == 5 and retries < MAX_RETRIES then
             -- Throttle: retry with exponential backoff
             local delay = 0.5 * (2 ^ retries)
             job.retries = retries + 1
             C_Timer.After(delay, function()
-                table.insert(Cortio.Net.Queue, job)
-                Cortio.Net:EnsureTicker()
+                table.insert(Interruptio.Net.Queue, job)
+                Interruptio.Net:EnsureTicker()
             end)
         else
-            Cortio.Data:LogError(job.tag or "Send",
+            Interruptio.Data:LogError(job.tag or "Send",
                 "AddonMsg fail (" .. tostring(job.channel) .. "): code=" .. tostring(result))
         end
     elseif not ok then
-        Cortio.Data:LogError(job.tag or "Send",
+        Interruptio.Data:LogError(job.tag or "Send",
             "AddonMsg error: " .. tostring(result))
     end
 end
 
-function Cortio.Net:EnsureTicker()
-    if not netTicker and #Cortio.Net.Queue > 0 then
+function Interruptio.Net:EnsureTicker()
+    if not netTicker and #Interruptio.Net.Queue > 0 then
         netTicker = C_Timer.NewTicker(SEND_INTERVAL, ProcessQueue)
     end
 end
 
-function Cortio.Net:SendGroupMessage(msg, tag)
+function Interruptio.Net:SendGroupMessage(msg, tag)
     local ch
     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
     elseif IsInRaid() then ch = "RAID"
     elseif IsInGroup() then ch = "PARTY"
     end
-    if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFAAAAAA[NET]|r QUEUE msg=" .. tostring(msg) .. " ch=" .. tostring(ch) .. " inGroup=" .. tostring(IsInGroup()) .. " inInst=" .. tostring(IsInGroup(LE_PARTY_CATEGORY_INSTANCE))) end
+    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFAAAAAA[NET]|r QUEUE msg=" .. tostring(msg) .. " ch=" .. tostring(ch) .. " inGroup=" .. tostring(IsInGroup()) .. " inInst=" .. tostring(IsInGroup(LE_PARTY_CATEGORY_INSTANCE))) end
     if ch then
-        table.insert(Cortio.Net.Queue, {
-            prefix = Cortio.Data.COMM_PREFIX,
+        table.insert(Interruptio.Net.Queue, {
+            prefix = Interruptio.Data.COMM_PREFIX,
             msg = msg,
             channel = ch,
             tag = tag or "Send",
             retries = 0,
         })
-        Cortio.Net:EnsureTicker()
+        Interruptio.Net:EnsureTicker()
     else
-        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFFFF0000[NET] NO CHANNEL — not in group!|r") end
+        if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFFFF0000[NET] NO CHANNEL — not in group!|r") end
     end
 end
 
 -- Reset per-minute counters every 60s
 C_Timer.NewTicker(60, function()
-    Cortio.Net.Stats.sentThisMinute = 0
-    Cortio.Net.Stats.receivedThisMinute = 0
+    Interruptio.Net.Stats.sentThisMinute = 0
+    Interruptio.Net.Stats.receivedThisMinute = 0
 end)

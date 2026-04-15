@@ -1,19 +1,19 @@
 --------------------------------------------------------------
--- CORTIO - Roster & Inspect
+-- INTERRUPTIO - Roster & Inspect
 --------------------------------------------------------------
-Cortio = Cortio or {}
-Cortio.Roster = {}
+Interruptio = Interruptio or {}
+Interruptio.Roster = {}
 
-Cortio.PlayerName = nil
-Cortio.PlayerClass = nil
-Cortio.RosterList = {}
-Cortio.InspectQueue = {}
+Interruptio.PlayerName = nil
+Interruptio.PlayerClass = nil
+Interruptio.RosterList = {}
+Interruptio.InspectQueue = {}
 local inspectPending = false
 local specCache = {}
 local specIdCache = {}
 
-function Cortio.Roster:EnsurePlayerInfo()
-    if not Cortio.PlayerName then
+function Interruptio.Roster:EnsurePlayerInfo()
+    if not Interruptio.PlayerName then
         local raw = UnitName("player")
         if raw then
             local ok, cleanN = pcall(string.format, "%s", raw)
@@ -24,16 +24,16 @@ function Cortio.Roster:EnsurePlayerInfo()
                 local okR, cr = pcall(string.format, "%s", r)
                 cleanR = okR and cr or r
             end
-            Cortio.PlayerName = cleanR and (n .. "-" .. cleanR) or n
+            Interruptio.PlayerName = cleanR and (n .. "-" .. cleanR) or n
             local _, cls = UnitClass("player")
-            Cortio.PlayerClass = cls
+            Interruptio.PlayerClass = cls
         end
     end
 end
 
-function Cortio.Roster:ProcessInspectQueue()
-    if inspectPending or #Cortio.InspectQueue == 0 then return end
-    local unit = table.remove(Cortio.InspectQueue, 1)
+function Interruptio.Roster:ProcessInspectQueue()
+    if inspectPending or #Interruptio.InspectQueue == 0 then return end
+    local unit = table.remove(Interruptio.InspectQueue, 1)
     if UnitExists(unit) and CanInspect(unit) then
         inspectPending = true
         C_Timer.After(0, function()
@@ -41,22 +41,22 @@ function Cortio.Roster:ProcessInspectQueue()
                 NotifyInspect(unit)
             else
                 inspectPending = false
-                C_Timer.After(0.5, function() Cortio.Roster:ProcessInspectQueue() end)
+                C_Timer.After(0.5, function() Interruptio.Roster:ProcessInspectQueue() end)
             end
         end)
     else
         if UnitExists(unit) then
             C_Timer.After(2, function()
-                table.insert(Cortio.InspectQueue, unit)
-                Cortio.Roster:ProcessInspectQueue()
+                table.insert(Interruptio.InspectQueue, unit)
+                Interruptio.Roster:ProcessInspectQueue()
             end)
         end
-        C_Timer.After(0.1, function() Cortio.Roster:ProcessInspectQueue() end)
+        C_Timer.After(0.1, function() Interruptio.Roster:ProcessInspectQueue() end)
     end
 end
 
-function Cortio.Roster:Rebuild()
-    Cortio.Roster:EnsurePlayerInfo()
+function Interruptio.Roster:Rebuild()
+    Interruptio.Roster:EnsurePlayerInfo()
     local newRoster = {}
     local function AddUnit(unit)
         local rawName, realm = UnitName(unit)
@@ -87,20 +87,20 @@ function Cortio.Roster:Rebuild()
                 specId = specIdCache[fullName] or 0
             else
                 local inQueue = false
-                for _, u in ipairs(Cortio.InspectQueue) do
+                for _, u in ipairs(Interruptio.InspectQueue) do
                     if UnitIsUnit(u, unit) then inQueue = true break end
                 end
                 if not inQueue then
-                    table.insert(Cortio.InspectQueue, unit)
-                    Cortio.Roster:ProcessInspectQueue()
+                    table.insert(Interruptio.InspectQueue, unit)
+                    Interruptio.Roster:ProcessInspectQueue()
                 end
             end
             
             -- Use spec-aware CD when available
-            local old = Cortio.RosterList[fullName]
-            local baseCd = Cortio.Data:GetClassInterruptCD(class)
-            if specId > 0 and Cortio.Data.SPEC_INTERRUPTS then
-                local specData = Cortio.Data.SPEC_INTERRUPTS[specId]
+            local old = Interruptio.RosterList[fullName]
+            local baseCd = Interruptio.Data:GetClassInterruptCD(class)
+            if specId > 0 and Interruptio.Data.SPEC_INTERRUPTS then
+                local specData = Interruptio.Data.SPEC_INTERRUPTS[specId]
                 if specData then baseCd = specData.baseCD end
             end
             newRoster[fullName] = {
@@ -114,14 +114,14 @@ function Cortio.Roster:Rebuild()
                 lastResult = old and old.lastResult or nil,
             }
             if UnitIsUnit(unit, "player") then
-                Cortio.PlayerName = fullName
+                Interruptio.PlayerName = fullName
             end
         end
     end
     
-    if CortioDB and CortioDB.testMode then
-        Cortio.RosterList = {
-            [Cortio.PlayerName or "Jugador"] = { unit="player", class=Cortio.PlayerClass or "HUNTER", specIcon="132111", cdEnd=0, cdTotal=15 },
+    if InterruptioDB and InterruptioDB.testMode then
+        Interruptio.RosterList = {
+            [Interruptio.PlayerName or "Jugador"] = { unit="player", class=Interruptio.PlayerClass or "HUNTER", specIcon="132111", cdEnd=0, cdTotal=15 },
             ["Aliado1"] = { unit="party1", class="WARRIOR", specIcon="132344", cdEnd=GetTime()+5, cdTotal=15 },
             ["Aliado2"] = { unit="party2", class="MAGE", specIcon="135856", cdEnd=0, cdTotal=20 },
         }
@@ -141,36 +141,36 @@ function Cortio.Roster:Rebuild()
         end
     end
     
-    Cortio.RosterList = newRoster
+    Interruptio.RosterList = newRoster
 end
 
-function Cortio.Roster:RebuildWithRetry()
-    Cortio.Roster:Rebuild()
+function Interruptio.Roster:RebuildWithRetry()
+    Interruptio.Roster:Rebuild()
     C_Timer.After(3, function()
         local count = 0
-        for _ in pairs(Cortio.RosterList) do count = count + 1 end
+        for _ in pairs(Interruptio.RosterList) do count = count + 1 end
         if count <= 1 and (IsInGroup() or IsInGroup(LE_PARTY_CATEGORY_INSTANCE) or IsInRaid()) then
-            Cortio.Roster:Rebuild()
-            if Cortio.UI then Cortio.UI:UpdatePanel() end
+            Interruptio.Roster:Rebuild()
+            if Interruptio.UI then Interruptio.UI:UpdatePanel() end
         end
     end)
 end
 
-function Cortio.Roster:AutoRegisterByClass()
+function Interruptio.Roster:AutoRegisterByClass()
     for i = 1, 4 do
         local u = "party" .. i
         if UnitExists(u) then
-            local fullName = Cortio.Taint:SafeUnitFullName(u)
+            local fullName = Interruptio.Taint:SafeUnitFullName(u)
             if fullName then
                 local _, cls = UnitClass(u)
-                if cls and Cortio.Data.CLASS_INTERRUPT_SPELLID[cls] and not Cortio.RosterList[fullName] then
+                if cls and Interruptio.Data.CLASS_INTERRUPT_SPELLID[cls] and not Interruptio.RosterList[fullName] then
                     local sid = specIdCache[fullName] or 0
-                    local baseCd = Cortio.Data:GetClassInterruptCD(cls)
-                    if sid > 0 and Cortio.Data.SPEC_INTERRUPTS and Cortio.Data.SPEC_INTERRUPTS[sid] then
-                        baseCd = Cortio.Data.SPEC_INTERRUPTS[sid].baseCD
+                    local baseCd = Interruptio.Data:GetClassInterruptCD(cls)
+                    if sid > 0 and Interruptio.Data.SPEC_INTERRUPTS and Interruptio.Data.SPEC_INTERRUPTS[sid] then
+                        baseCd = Interruptio.Data.SPEC_INTERRUPTS[sid].baseCD
                     end
                     local okG, uGuid = pcall(UnitGUID, u)
-                    Cortio.RosterList[fullName] = {
+                    Interruptio.RosterList[fullName] = {
                         unit     = u,
                         guid     = (okG and uGuid) or nil,
                         class    = cls,
@@ -185,11 +185,11 @@ function Cortio.Roster:AutoRegisterByClass()
     end
 end
 
-function Cortio.Roster:RegisterPartyWatchers()
-    -- Vaciado: Ahora el Combat Log (en Cortio.lua) hace todo este trabajo sin taint.
+function Interruptio.Roster:RegisterPartyWatchers()
+    -- Vaciado: Ahora el Combat Log (en Interruptio.lua) hace todo este trabajo sin taint.
 end
 
-function Cortio.Roster:OnInspectReady(guid)
+function Interruptio.Roster:OnInspectReady(guid)
     inspectPending = false
     local unitsToCheck = {}
     if IsInRaid() then
@@ -215,13 +215,13 @@ function Cortio.Roster:OnInspectReady(guid)
                         if si then specIcon = tostring(si) end
                         specCache[fullName] = specIcon
                         specIdCache[fullName] = specId
-                        Cortio.Roster:Rebuild()
-                        if Cortio.UI then Cortio.UI:UpdatePanel() end
+                        Interruptio.Roster:Rebuild()
+                        if Interruptio.UI then Interruptio.UI:UpdatePanel() end
                     end
                 end
                 break
             end
         end
     end
-    C_Timer.After(0.3, function() Cortio.Roster:ProcessInspectQueue() end)
+    C_Timer.After(0.3, function() Interruptio.Roster:ProcessInspectQueue() end)
 end

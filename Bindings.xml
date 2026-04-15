@@ -1,4 +1,4 @@
 <Bindings>
-    <Binding name="CLICK CortioMarkSABT:LeftButton" header="CORTIO_HEADER" category="ADDONS">
+    <Binding name="CLICK InterruptioMarkSABT:LeftButton" header="INTERRUPTIO_HEADER" category="ADDONS">
     </Binding>
 </Bindings>
