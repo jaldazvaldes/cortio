@@ -143,6 +143,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Cortio.UI:ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
+        Cortio.SetActive(not IsInRaid())
+        if not Cortio._active then return end
         Cortio.Roster:Rebuild()
         Cortio.Roster:AutoRegisterByClass()
         Cortio.Roster:RegisterPartyWatchers()
@@ -152,6 +154,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             Cortio.Marks:QueueSecureBtnUpdate()
         end
         C_Timer.After(1, function()
+            if not Cortio._active then return end
             Cortio.Roster:RegisterPartyWatchers()
             Cortio.Roster:AutoRegisterByClass()
             Cortio.RegisterPartyInterruptWatchers()
@@ -159,6 +162,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             Cortio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
         end)
         C_Timer.After(3, function()
+            if not Cortio._active then return end
             Cortio.Roster:RegisterPartyWatchers()
             Cortio.Roster:AutoRegisterByClass()
             Cortio.RegisterPartyInterruptWatchers()
@@ -331,69 +335,94 @@ chatFrame:RegisterEvent("CHAT_MSG_INSTANCE_CHAT_LEADER")
 chatFrame:RegisterEvent("CHAT_MSG_RAID")
 chatFrame:RegisterEvent("CHAT_MSG_RAID_LEADER")
 
-chatFrame:SetScript("OnEvent", function(self, event, arg1)
+chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if not arg1 then return end
-    -- arg1 from CHAT_MSG can be a secret string in WoW 12.0.
-    -- We CANNOT use text:match() because that indexes the tainted string.
-    -- Use pcall(string.match, text, pattern) instead.
-    local ok, text = pcall(tostring, arg1)
-    if not ok or not text then return end
+    
+    -- WoW 12.0: chat message text can be tainted.
+    -- Strategy: use string.format + pcall to detaint, same as BliZzi's SafeUnitName.
+    local ok1, cleanText = pcall(string.format, "%s", arg1)
+    if not ok1 or not cleanText then return end
+    
+    -- Verify detainted text is usable
+    local ok2 = pcall(rawset, {}, cleanText, true)
+    if not ok2 then return end
     
     -- Parse macro format: "[Cortio] Assigned {rt8} (Annarya)"
-    local matchOk, slotStr, playerName = pcall(string.match, text, "%[Cortio%] Assigned %{rt(%d+)%} %((.-)%)")
-    if not matchOk or not slotStr or not playerName then return end
+    local slotStr, playerName = string.match(cleanText, "%[Cortio%] Assigned %{rt(%d+)%} %((.-)%)")
+    if not slotStr or not playerName then return end
     
     local slot = tonumber(slotStr)
     if not slot or slot <= 0 then return end
     
-    local myShort = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or ""
-    if playerName == myShort then return end
+    print("|cFF00FFFF[Cortio]|r |cFFFF88FF[CHAT SYNC]|r Received mark: {rt" .. slot .. "} → " .. playerName)
     
-    -- Find player in roster
+    -- Don't skip own messages — we need self-consistency.
+    -- But DO skip if we already processed this mark locally.
+    local myShort = Cortio.PlayerName and Cortio.Data:ShortName(Cortio.PlayerName) or ""
+    
+    -- Find player in roster (try multiple match strategies)
     local rPlayer = nil
     if Cortio.RosterList then
         for rName, _ in pairs(Cortio.RosterList) do
             local short = Cortio.Data:ShortName(rName)
-            if short == playerName or Ambiguate(rName, "short") == playerName then
+            if short == playerName then
                 rPlayer = rName
                 break
             end
         end
-    end
-    
-    if rPlayer and Cortio.RosterList[rPlayer] then
-        Cortio.Marks:ClearPlayerMark(rPlayer)
-        
-        local uToken = nil
-        for i = 1, 4 do
-            local u = "party" .. i
-            if UnitExists(u) then
-                local okN, n = pcall(UnitName, u)
-                if okN and n then
-                    if n == strsplit("-", rPlayer) or n == playerName then
-                        uToken = u .. "target"
-                        break
-                    end
+        -- Fallback: try Ambiguate
+        if not rPlayer then
+            for rName, _ in pairs(Cortio.RosterList) do
+                if Ambiguate(rName, "short") == playerName then
+                    rPlayer = rName
+                    break
                 end
             end
         end
-        
-        local rClass = Cortio.RosterList[rPlayer].class or "UNKNOWN"
-        table.insert(Cortio.Marks.Active, {
-            playerName = rPlayer,
-            playerClass = rClass,
-            specIcon = "0", 
-            remoteCDEnd = 0,
-            remoteCDDuration = 0,
-            nameplateUnit = nil,
-            unitToken = uToken,
-            markerSlot = slot
-        })
-        
-        Cortio.UI:UpdatePanel()
-        Cortio.UI:UpdateAllNameplates()
-        if CortioDB and CortioDB.debugLogs then print("|cFF00FFFF[Cortio]|r |cFF00FF00MACRO SYNC|r assigned {rt" .. slot .. "} to " .. rPlayer) end
     end
+    
+    if not rPlayer then
+        print("|cFF00FFFF[Cortio]|r |cFFFF8800[CHAT SYNC]|r Player '" .. playerName .. "' not in roster")
+        return
+    end
+    
+    if not Cortio.RosterList[rPlayer] then return end
+    
+    -- Skip if this is our own mark (we already processed it locally)
+    local short = Cortio.Data:ShortName(rPlayer)
+    if short == myShort then return end
+    
+    Cortio.Marks:ClearPlayerMark(rPlayer)
+    
+    local uToken = nil
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) then
+            local okN, n = pcall(UnitName, u)
+            if okN and n then
+                if n == strsplit("-", rPlayer) or n == playerName then
+                    uToken = u .. "target"
+                    break
+                end
+            end
+        end
+    end
+    
+    local rClass = Cortio.RosterList[rPlayer].class or "UNKNOWN"
+    table.insert(Cortio.Marks.Active, {
+        playerName = rPlayer,
+        playerClass = rClass,
+        specIcon = "0", 
+        remoteCDEnd = 0,
+        remoteCDDuration = 0,
+        nameplateUnit = nil,
+        unitToken = uToken,
+        markerSlot = slot
+    })
+    
+    Cortio.UI:UpdatePanel()
+    Cortio.UI:UpdateAllNameplates()
+    print("|cFF00FFFF[Cortio]|r |cFF00FF00[CHAT SYNC]|r ✓ Assigned {rt" .. slot .. "} to " .. rPlayer)
 end)
 
 -- ============================================================
@@ -606,9 +635,28 @@ end
 -- Handles: party casts, nameplate interrupts, nameplate auras
 -- ============================================================
 local _interruptFrame = CreateFrame("Frame")
-_interruptFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-_interruptFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
-_interruptFrame:RegisterEvent("UNIT_AURA")
+
+-- ============================================================
+-- Cortio.SetActive: single point of control for raid disable
+-- Registers/unregisters events instead of checking IsInRaid()
+-- every frame — zero CPU overhead when inactive.
+-- ============================================================
+Cortio._active = false
+function Cortio.SetActive(active)
+    if active == Cortio._active then return end
+    Cortio._active = active
+    if active then
+        _interruptFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+        _interruptFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+        _interruptFrame:RegisterEvent("UNIT_AURA")
+    else
+        _interruptFrame:UnregisterAllEvents()
+        if Cortio.UI and Cortio.UI.Panel then Cortio.UI.Panel:Hide() end
+        if Cortio.PanelTicker then Cortio.PanelTicker:Cancel(); Cortio.PanelTicker = nil end
+    end
+end
+-- Start active (solo/party). GROUP_ROSTER_UPDATE will deactivate in raids.
+Cortio.SetActive(true)
 
 _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -732,6 +780,8 @@ local _cleanLastBroadcastTime = 0
 
 C_Timer.After(3, function()
     C_Timer.NewTicker(0.3, function()
+        if not Cortio._active then return end
+
         -- Get player info from CLEAN sources
         local playerName = UnitName("player")
         local _, playerClass = UnitClass("player")

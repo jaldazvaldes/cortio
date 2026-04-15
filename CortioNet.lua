@@ -60,42 +60,26 @@ local function ProcessQueue()
 
     if ok and (result == nil or result == 0) then
         -- Success
+        Cortio.Net.addonMsgBlocked = false
         Cortio.Net.Stats.sent = Cortio.Net.Stats.sent + 1
         Cortio.Net.Stats.sentThisMinute = Cortio.Net.Stats.sentThisMinute + 1
     elseif ok and result then
         local retries = job.retries or 0
 
-        if (result == 5 or result == 11) and retries < MAX_RETRIES then
-            -- Throttle (5) or Lockdown (11): retry with exponential backoff
+        if result == 11 then
+            -- Addon Message Lockdown (M+ instances block ALL channels).
+            -- This is EXPECTED — do NOT retry, do NOT fallback to WHISPER.
+            -- Marker sync works via /p chat macro instead.
+            Cortio.Net.addonMsgBlocked = true
+            -- Silent: no error log, no retry
+        elseif result == 5 and retries < MAX_RETRIES then
+            -- Throttle: retry with exponential backoff
             local delay = 0.5 * (2 ^ retries)
             job.retries = retries + 1
-            if result == 11 and job.channel == "INSTANCE_CHAT" then
-                job.channel = "PARTY"
-            end
             C_Timer.After(delay, function()
                 table.insert(Cortio.Net.Queue, job)
                 Cortio.Net:EnsureTicker()
             end)
-        elseif result == 11 and job.channel == "PARTY" and not job.fallbackP2P then
-            -- Last resort: whisper each party member directly
-            for i = 1, 4 do
-                local targetUnit = "party"..i
-                if UnitExists(targetUnit) and UnitIsPlayer(targetUnit) then
-                    local cleanTarget = Cortio.Taint:SafeUnitFullName(targetUnit)
-                    if cleanTarget then
-                        table.insert(Cortio.Net.Queue, {
-                            prefix = job.prefix,
-                            msg = job.msg,
-                            channel = "WHISPER",
-                            target = cleanTarget,
-                            fallbackP2P = true,
-                            tag = "P2P",
-                            retries = 0,
-                        })
-                    end
-                end
-            end
-            Cortio.Net:EnsureTicker()
         else
             Cortio.Data:LogError(job.tag or "Send",
                 "AddonMsg fail (" .. tostring(job.channel) .. "): code=" .. tostring(result))

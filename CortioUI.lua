@@ -482,6 +482,16 @@ function Cortio.UI:ReleaseNameplateFrame(unit)
             ic.isLocal = false
             ic.ownerName = nil
         end
+        if f.glow then
+            f.glow:Hide()
+            if f.glowAG then f.glowAG:Stop() end
+        end
+        -- Restore nameplate scale
+        local np = C_NamePlate.GetNamePlateForUnit(unit)
+        if np and np._cortioScaled then
+            np:SetScale(np._cortioOrigScale or 1)
+            np._cortioScaled = false
+        end
         f:Hide()
         f:ClearAllPoints()
         f.inUse = false
@@ -538,8 +548,102 @@ function Cortio.UI:UpdateNameplate(unit)
     
     if f:GetParent() ~= UIParent then f:SetParent(UIParent) end
     f:ClearAllPoints()
-    f:SetPoint("RIGHT", anchorFrame, "LEFT", -6, 0)
+    -- Read icon position from settings: 1 = Left (default), 2 = Right
+    local iconSide = (CortioDB and CortioDB.iconSide) or 1
+    if iconSide == 2 then
+        f:SetPoint("LEFT", anchorFrame, "RIGHT", 6, 0)
+    else
+        f:SetPoint("RIGHT", anchorFrame, "LEFT", -6, 0)
+    end
     f:Show()
+    
+    -- === NAMEPLATE BOOST: scale up + vertical offset to separate from pull ===
+    local showGlow = (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow
+    local np = C_NamePlate.GetNamePlateForUnit(unit)
+    if np and showGlow then
+        if not np._cortioScaled then
+            np._cortioOrigScale = np:GetScale()
+            np:SetScale((np._cortioOrigScale or 1) * 1.15)
+            np._cortioScaled = true
+        end
+    end
+    
+    -- === ANIMATED GLOW (configurable via Settings) ===
+    if showGlow then
+        if not f.glow then
+            -- Main glow container
+            f.glow = CreateFrame("Frame", nil, UIParent)
+            f.glow:SetFrameStrata("BACKGROUND")
+            f.glow:SetFrameLevel(0)
+            
+            -- Layer 1: outermost soft glow (largest, most transparent)
+            f.glowOuter = f.glow:CreateTexture(nil, "BACKGROUND", nil, -2)
+            f.glowOuter:SetTexture("Interface\\Buttons\\WHITE8x8")
+            
+            -- Layer 2: middle glow
+            f.glowMid = f.glow:CreateTexture(nil, "BACKGROUND", nil, -1)
+            f.glowMid:SetTexture("Interface\\Buttons\\WHITE8x8")
+            
+            -- Layer 3: inner bright border (thinnest, brightest)
+            f.glowInner = CreateFrame("Frame", nil, f.glow, "BackdropTemplate")
+            f.glowInner:SetBackdrop({
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = 2,
+            })
+            
+            -- Pulse animation: breathing effect
+            f.glowAG = f.glow:CreateAnimationGroup()
+            f.glowAG:SetLooping("BOUNCE")
+            local pulse = f.glowAG:CreateAnimation("Alpha")
+            pulse:SetFromAlpha(0.45)
+            pulse:SetToAlpha(1.0)
+            pulse:SetDuration(0.9)
+            pulse:SetSmoothing("IN_OUT")
+            f.glowAG:Play()
+        end
+        
+        -- Position all glow layers around the nameplate
+        f.glow:ClearAllPoints()
+        f.glow:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -10, 10)
+        f.glow:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 10, -10)
+        f.glow:Show()
+        
+        f.glowOuter:ClearAllPoints()
+        f.glowOuter:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -8, 8)
+        f.glowOuter:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 8, -8)
+        
+        f.glowMid:ClearAllPoints()
+        f.glowMid:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -4, 4)
+        f.glowMid:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 4, -4)
+        
+        f.glowInner:ClearAllPoints()
+        f.glowInner:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -1, 1)
+        f.glowInner:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 1, -1)
+        
+        -- Color by class
+        local glowMark = marks[1]
+        if glowMark then
+            local colorHex = Cortio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
+            local gR = tonumber(colorHex:sub(3, 4), 16) / 255
+            local gG = tonumber(colorHex:sub(5, 6), 16) / 255
+            local gB = tonumber(colorHex:sub(7, 8), 16) / 255
+            f.glowOuter:SetColorTexture(gR, gG, gB, 0.10)
+            f.glowMid:SetColorTexture(gR, gG, gB, 0.22)
+            f.glowInner:SetBackdropBorderColor(gR, gG, gB, 0.95)
+        end
+        
+        if not f.glowAG:IsPlaying() then f.glowAG:Play() end
+    else
+        if f.glow then
+            f.glow:Hide()
+            if f.glowAG then f.glowAG:Stop() end
+        end
+        -- Restore nameplate scale
+        if np and np._cortioScaled then
+            np:SetScale(np._cortioOrigScale or 1)
+            np._cortioScaled = false
+        end
+    end
     
     local iconIdx = 0
     for _, mark in ipairs(marks) do
@@ -704,6 +808,48 @@ function Cortio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(category, testSetting, "Genera un grupo falso para probar la interfaz de cortes.")
+    
+    -- Nameplate Glow
+    local glowSetting = Settings.RegisterProxySetting(
+        category, "Cortio_NameplateGlow", Settings.VarType.Boolean, "Brillo en Nameplate",
+        (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow,
+        function() return (not CortioDB or CortioDB.nameplateGlow == nil) and true or CortioDB.nameplateGlow end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.nameplateGlow = val
+            Cortio.UI:UpdateAllNameplates()
+        end
+    )
+    Settings.CreateCheckbox(category, glowSetting, "Muestra un borde brillante alrededor de la nameplate del mob asignado para cortarte.")
+    
+    -- Icon Position (LEFT / RIGHT of nameplate)
+    local iconSideSetting = Settings.RegisterProxySetting(
+        category, "Cortio_IconSide", Settings.VarType.Number, "Lado de los iconos de corte",
+        (CortioDB and CortioDB.iconSide) or 1,
+        function() return (CortioDB and CortioDB.iconSide) or 1 end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.iconSide = val
+            Cortio.UI:UpdateAllNameplates()
+        end
+    )
+    local sideOptions = Settings.CreateSliderOptions(1, 2, 1)
+    sideOptions:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v)
+        return v == 1 and "Izquierda" or "Derecha"
+    end)
+    Settings.CreateSlider(category, iconSideSetting, sideOptions, "En qué lado de la barra de vida del mob aparecen los iconos de interrupción.")
+    
+    -- Debug Logs
+    local debugSetting = Settings.RegisterProxySetting(
+        category, "Cortio_DebugLogs", Settings.VarType.Boolean, "Logs de Debug",
+        (CortioDB and CortioDB.debugLogs) or false,
+        function() return (CortioDB and CortioDB.debugLogs) or false end,
+        function(val)
+            if not CortioDB then CortioDB = {} end
+            CortioDB.debugLogs = val
+        end
+    )
+    Settings.CreateCheckbox(category, debugSetting, "Muestra mensajes de debug en el chat (correlación de señales, red, etc).")
     
     Settings.RegisterAddOnCategory(category)
 end
