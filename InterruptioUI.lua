@@ -118,6 +118,20 @@ badgeText:SetTextColor(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3])
 
 Interruptio.UI.Panel = panel
 
+function Interruptio.UI:ApplyTheme()
+    local modern = (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI
+    if modern then
+        panelBg:SetColorTexture(0, 0, 0, 0.4)
+        panel:SetBackdropBorderColor(0, 0, 0, 0.9)
+        headerBg:SetColorTexture(0, 0, 0, 0.7)
+    else
+        panelBg:SetColorTexture(C_BG[1], C_BG[2], C_BG[3], 0.95)
+        panel:SetBackdropBorderColor(C_BORDER[1], C_BORDER[2], C_BORDER[3], 0.35)
+        headerBg:SetColorTexture(C_HEADER_BG[1], C_HEADER_BG[2], C_HEADER_BG[3], 0.98)
+    end
+end
+Interruptio.UI:ApplyTheme()
+
 -- Content area (holds bars)
 local contentFrame = CreateFrame("Frame", nil, panel)
 contentFrame:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -HEADER_GAP)
@@ -217,6 +231,31 @@ local function getBar(index)
     bar.strip:SetHeight(STRIP_HEIGHT)
     bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
 
+    bar._targetStripW = 1
+    bar.strip:SetWidth(1)
+    bar:SetScript("OnUpdate", function(self, elapsed)
+        local currW = self.strip:GetWidth()
+        if self._targetStripW and math.abs(currW - self._targetStripW) > 0.5 then
+            self.strip:SetWidth(currW + (self._targetStripW - currW) * 15 * elapsed)
+        end
+    end)
+    
+    -- Flash glow overlay for ready state
+    bar.flashGlow = bar:CreateTexture(nil, "OVERLAY")
+    bar.flashGlow:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 2, 0)
+    bar.flashGlow:SetPoint("BOTTOMRIGHT", 0, 0)
+    bar.flashGlow:SetColorTexture(1, 1, 1, 1)
+    bar.flashGlow:SetBlendMode("ADD")
+    bar.flashGlow:SetAlpha(0)
+    
+    bar.flashAG = bar.flashGlow:CreateAnimationGroup()
+    bar.flashAG:SetLooping("BOUNCE")
+    local flashAlpha = bar.flashAG:CreateAnimation("Alpha")
+    flashAlpha:SetFromAlpha(0.1)
+    flashAlpha:SetToAlpha(0.4)
+    flashAlpha:SetDuration(1.2)
+    flashAlpha:SetSmoothing("IN_OUT")
+
     bar:Hide()
     barPool[index] = bar
     return bar
@@ -310,26 +349,55 @@ function Interruptio.UI:UpdatePanel()
         -- Class stripe
         bar.classStripe:SetColorTexture(classR, classG, classB, 0.8)
 
+        local modern = (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI
+        local emphasize = (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady
+
         -- State-dependent visuals
         if entry.isReady then
+            if not bar._wasReady then
+                bar._wasReady = true
+                if modern and emphasize and barWidth > 10 then bar.flashAG:Play() end
+            end
+            if emphasize then 
+                bar:SetAlpha(1.0)
+                bar.icon:SetDesaturated(false)
+            end
+            
             -- Ready: subtle bright tint on background, green border
+            local bgA = modern and 0.4 or 0.92
             bar.bg:SetColorTexture(
                 C_BAR_BG[1] + C_READY[1] * 0.04,
                 C_BAR_BG[2] + C_READY[2] * 0.04,
-                C_BAR_BG[3] + C_READY[3] * 0.04, 0.92)
-            bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], 0.25)
+                C_BAR_BG[3] + C_READY[3] * 0.04, bgA)
+            bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], modern and 0.6 or 0.25)
             bar.statusText:SetText("|cff" .. HEX_READY .. "READY|r")
             -- Icon cooldown: clear
             bar.iconCD:SetCooldown(0, 0)
             -- Progress strip: full width, green
-            bar.strip:SetWidth(barWidth - 6)
-            bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], 0.45)
+            if modern then
+                bar._targetStripW = barWidth - 6
+            else
+                bar.strip:SetWidth(barWidth - 6)
+            end
+            bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], modern and 0.9 or 0.45)
         else
+            bar._wasReady = false
+            if modern then bar.flashAG:Stop() end
+            if emphasize then 
+                bar:SetAlpha(0.45)
+                bar.icon:SetDesaturated(true)
+            else
+                bar:SetAlpha(1.0)
+                bar.icon:SetDesaturated(false)
+            end
+            
             -- On CD: default dark background, colored border
             local ratio = entry.remaining / entry.cdTotal
             local r, g, b, hex = getCooldownColor(ratio)
-            bar.bg:SetColorTexture(C_BAR_BG[1], C_BAR_BG[2], C_BAR_BG[3], 0.9)
-            bar.border:SetBackdropBorderColor(r, g, b, 0.15)
+            local baseBg = modern and {0, 0, 0} or C_BAR_BG
+            local bgA = modern and 0.4 or 0.9
+            bar.bg:SetColorTexture(baseBg[1], baseBg[2], baseBg[3], bgA)
+            bar.border:SetBackdropBorderColor(r, g, b, modern and 0.2 or 0.15)
 
             local text
             if entry.remaining >= 10 then
@@ -347,8 +415,15 @@ function Interruptio.UI:UpdatePanel()
             if progress < 0 then progress = 0 end
             if progress > 1 then progress = 1 end
             local stripW = math.max(1, (barWidth - 6) * progress)
-            bar.strip:SetWidth(stripW)
-            bar.strip:SetColorTexture(r, g, b, 0.5)
+            if modern then
+                bar._targetStripW = stripW
+                if math.abs(bar.strip:GetWidth() - stripW) > barWidth / 2 then
+                    bar.strip:SetWidth(stripW)
+                end
+            else
+                bar.strip:SetWidth(stripW)
+            end
+            bar.strip:SetColorTexture(r, g, b, modern and 0.8 or 0.5)
         end
 
         -- Spell icon (spec-aware)
@@ -922,6 +997,31 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     Settings.CreateCheckbox(category, announceSetting, "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca.")
     
+    local modernSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_ModernUI", Settings.VarType.Boolean, "UI Moderna (Translúcida & Fluida)", 
+        (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI, 
+        function() return (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.modernUI = val
+            Interruptio.UI:ApplyTheme()
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(category, modernSetting, "Activa fondos estilo 'cristal' translúcidos y barras con movimiento y destellos brillantes suaves.")
+    
+    local emphasizeSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, "Resaltar Disp. (Atenuación + Latido)", 
+        (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady, 
+        function() return (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.emphasizeReady = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(category, emphasizeSetting, "Las barras de cortes en enfriamiento se oscurecen al 60% y sus iconos se vuelven grises. Los disponibles laten al 100%.")
+
     local testSetting = Settings.RegisterProxySetting(
         category, "Interruptio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
         (InterruptioDB and InterruptioDB.testMode) or false, 
@@ -1080,6 +1180,17 @@ SlashCmdList["INTERRUPTIO"] = function(msg)
     elseif cmd == "clearerrors" or cmd == "clear" then
         if InterruptioDB then InterruptioDB.errors = {} end
         print("|cFF00FFFF[Interruptio]|r Errores borrados.")
+    elseif cmd == "test" then
+        if not InterruptioDB then InterruptioDB = {} end
+        InterruptioDB.testMode = not InterruptioDB.testMode
+        Interruptio.Roster:Rebuild()
+        if InterruptioDB.testMode then 
+            Interruptio.UI.Panel:Show()
+            print("|cFF00FFFF[Interruptio]|r Modo Prueba ACTIVADO.")
+        else 
+            Interruptio.UI.Panel:Hide()
+            print("|cFF00FFFF[Interruptio]|r Modo Prueba DESACTIVADO.")
+        end
     elseif cmd == "debug" then
         print("|cFF00FFFF[Interruptio]|r === DEBUG ===")
         print("  playerName = " .. tostring(Interruptio.PlayerName))
@@ -1145,7 +1256,7 @@ SlashCmdList["INTERRUPTIO"] = function(msg)
             print("|cFF00FFFF[Interruptio]|r Developer logs: |cFFFF4444OFF|r")
         end
     else
-        print("|cFF00FFFF[Interruptio]|r Opciones: /it show|hide | /it debug | /it debugcl | /it logs | /it errors | /it clear")
+        print("|cFF00FFFF[Interruptio]|r Opciones: /it test | /it show|hide | /it debug | /it debugcl | /it logs | /it errors | /it clear")
         print("|cFF00FFFF[Interruptio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end
