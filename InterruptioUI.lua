@@ -1049,6 +1049,7 @@ panel:Hide()
 local settingsCreated = false
 function Interruptio.UI:CreateSettingsMenu()
     if settingsCreated then return end
+    settingsCreated = true
     if not Settings or not Settings.RegisterVerticalLayoutCategory then return end
     local L = Interruptio.L
     local category = Settings.RegisterVerticalLayoutCategory("Interruptio")
@@ -1106,7 +1107,14 @@ function Interruptio.UI:CreateSettingsMenu()
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.testMode = val
             Interruptio.Roster:Rebuild()
-            if val then Interruptio.UI.Panel:Show() else Interruptio.UI.Panel:Hide() end
+            if val then 
+                Interruptio.UI.Panel:Show() 
+            else 
+                if #Interruptio.Marks.Active == 0 and not (InterruptioDB and InterruptioDB.unlockPanel) then
+                    Interruptio.UI.Panel:Hide() 
+                end
+            end
+            Interruptio.UI:UpdatePanel()
         end
     )
     Settings.CreateCheckbox(catGen, testSetting, L["BTN_TEST_MODE_DESC"])
