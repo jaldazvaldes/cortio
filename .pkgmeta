@@ -1,0 +1,9 @@
+package-as: Interruptio
+
+ignore:
+    - .git
+    - .gitignore
+    - README.md
+    - scratch
+    - .vscode
+    - claude.md

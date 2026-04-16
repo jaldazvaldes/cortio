@@ -137,16 +137,17 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             if chSync then
                 local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
                 local chatIcon = _slotSync > 0 and ("{rt" .. _slotSync .. "}") or ""
-                local txt = "[Interruptio] Assigned " .. chatIcon .. " (" .. sName .. ")"
+                
+                local txt = string.format(Interruptio.L["MSG_ASSIGNED_SELF"], chatIcon, sName)
                 
                 if InterruptioDB and InterruptioDB.announceCD then
                     Interruptio.Roster:EnsurePlayerInfo()
                     local pData = Interruptio.RosterList[Interruptio.PlayerName]
                     if pData and pData.cdEnd and pData.cdEnd > GetTime() then
                         local rem = pData.cdEnd - GetTime()
-                        txt = txt .. " - cd " .. math.floor(rem) .. "s"
+                        txt = txt .. string.format(Interruptio.L["CD_REMAINING"], math.floor(rem))
                     elseif pData then
-                        txt = txt .. " - READY"
+                        txt = txt .. (Interruptio.L["READY_SUFFIX"] or " - READY")
                     end
                 end
                 SendChatMessage(txt, chSync)
@@ -249,7 +250,7 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
         if not targetName then return end
         
         local iconStr = Interruptio.Data:GetRaidIconString(slot, 14)
-        print("|cFF00FFFF[Interruptio]|r Corte asignado" .. (slot > 0 and (" " .. iconStr) or "") .. " |cFFFFDD00" .. tostring(targetName) .. "|r")
+        print("|cFF00FFFF[Interruptio]|r " .. string.format(Interruptio.L["MSG_ASSIGNED_PARTY"], (slot > 0 and iconStr or ""), "|cFFFFDD00" .. tostring(targetName) .. "|r"))
     end)
 end
 InterruptioMarkSABT:HookScript("PostClick", function(self, button, down) Interruptio.Marks:HandlePostClick(self, button, down) end)

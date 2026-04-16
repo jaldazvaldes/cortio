@@ -99,7 +99,7 @@ local titleText = headerFrame:CreateFontString(nil, "OVERLAY")
 titleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
 titleText:SetShadowOffset(1, -1)
 titleText:SetPoint("LEFT", 10, 0)
-titleText:SetText("|cff00d4ffINTERRUPTIO|r")
+titleText:SetText("|cff00d4ff" .. (Interruptio.L["PANEL_HEADER"] or "INTERRUPTIO") .. "|r")
 
 -- Badge pill (ready/total counter)
 local badgeFrame = CreateFrame("Frame", nil, headerFrame)
@@ -117,6 +117,20 @@ badgeText:SetPoint("CENTER", 0, 0)
 badgeText:SetTextColor(C_ACCENT[1], C_ACCENT[2], C_ACCENT[3])
 
 Interruptio.UI.Panel = panel
+
+-- Overlay interactivo para arrastrar (modo desbloqueo)
+panel.dragOverlay = CreateFrame("Frame", nil, panel)
+panel.dragOverlay:SetAllPoints()
+panel.dragOverlay:SetFrameLevel(panel:GetFrameLevel() + 5)
+local dragBg = panel.dragOverlay:CreateTexture(nil, "BACKGROUND")
+dragBg:SetAllPoints()
+dragBg:SetColorTexture(0, 1, 0, 0.2)
+local dragText = panel.dragOverlay:CreateFontString(nil, "OVERLAY")
+dragText:SetFont("Fonts\\FRIZQT__.TTF", 16, "OUTLINE")
+dragText:SetPoint("CENTER")
+dragText:SetText(Interruptio.L["UNLOCK_DRAG_ME"] or "DRAG ME")
+dragText:SetTextColor(0, 1, 0)
+panel.dragOverlay:Hide()
 
 function Interruptio.UI:ApplyTheme()
     local modern = (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI
@@ -1036,12 +1050,21 @@ local settingsCreated = false
 function Interruptio.UI:CreateSettingsMenu()
     if settingsCreated then return end
     if not Settings or not Settings.RegisterVerticalLayoutCategory then return end
-    settingsCreated = true
-    
+    local L = Interruptio.L
     local category = Settings.RegisterVerticalLayoutCategory("Interruptio")
+    Settings.RegisterAddOnCategory(category)
     
+    local catGen = Settings.RegisterVerticalLayoutSubcategory(category, L["CAT_GENERAL"])
+    Settings.RegisterAddOnCategory(catGen)
+    
+    local catPanel = Settings.RegisterVerticalLayoutSubcategory(category, L["CAT_PANEL"])
+    Settings.RegisterAddOnCategory(catPanel)
+    
+    local catNP = Settings.RegisterVerticalLayoutSubcategory(category, L["CAT_NAMEPLATES"])
+    Settings.RegisterAddOnCategory(catNP)
+
     local scaleSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_Scale", Settings.VarType.Number, "Tamaño de la Ventana", 
+        catGen, "Interruptio_Scale", Settings.VarType.Number, L["OPT_SCALE"], 
         (InterruptioDB and InterruptioDB.scale) or 1.0, 
         function() return (InterruptioDB and InterruptioDB.scale) or 1.0 end,
         function(val) 
@@ -1052,10 +1075,10 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     local scaleOpts = Settings.CreateSliderOptions(0.5, 2.0, 0.05)
     scaleOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return string.format("%.2fx", v) end)
-    Settings.CreateSlider(category, scaleSetting, scaleOpts, "Ajusta la escala del panel flotante.")
+    Settings.CreateSlider(category, scaleSetting, scaleOpts, L["OPT_SCALE_DESC"])
     
     local announceSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_Announce", Settings.VarType.Boolean, "Anunciar asignaciones en grupo", 
+        catGen, "Interruptio_Announce", Settings.VarType.Boolean, L["OPT_ANNOUNCE"], 
         (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce, 
         function() return (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce end,
         function(val) 
@@ -1063,10 +1086,10 @@ function Interruptio.UI:CreateSettingsMenu()
             InterruptioDB.announce = val 
         end
     )
-    Settings.CreateCheckbox(category, announceSetting, "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca.")
+    Settings.CreateCheckbox(catGen, announceSetting, L["OPT_ANNOUNCE_DESC"])
 
     local announceCDSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_AnnounceCD", Settings.VarType.Boolean, "Anunciar tu CD al marcar", 
+        catGen, "Interruptio_AnnounceCD", Settings.VarType.Boolean, L["OPT_ANNOUNCE_CD"], 
         (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD, 
         function() return (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD end,
         function(val)  
@@ -1074,59 +1097,9 @@ function Interruptio.UI:CreateSettingsMenu()
             InterruptioDB.announceCD = val 
         end
     )
-    Settings.CreateCheckbox(category, announceCDSetting, "Añade el tiempo de recarga (CD) que le queda a tu corte en el mensaje de chat al asignar una marca.")
-    
-    local modernSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_ModernUI", Settings.VarType.Boolean, "UI Moderna (Translúcida & Fluida)", 
-        (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI, 
-        function() return (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI end,
-        function(val) 
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.modernUI = val
-            Interruptio.UI:ApplyTheme()
-            Interruptio.UI:UpdatePanel()
-        end
-    )
-    Settings.CreateCheckbox(category, modernSetting, "Activa fondos estilo 'cristal' translúcidos y barras con movimiento y destellos brillantes suaves.")
-    
-    local emphasizeSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, "Resaltar Disp. (Atenuación + Latido)", 
-        (InterruptioDB and InterruptioDB.emphasizeReady) or false, 
-        function() return (InterruptioDB and InterruptioDB.emphasizeReady) or false end,
-        function(val) 
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.emphasizeReady = val
-            Interruptio.UI:UpdatePanel()
-        end
-    )
-    Settings.CreateCheckbox(category, emphasizeSetting, "Las barras de cortes en enfriamiento se oscurecen al 60% y sus iconos se vuelven grises. Los disponibles laten al 100%.")
-
-    local classBarsSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_ClassBars", Settings.VarType.Boolean, "Barras Progeso Clásicas (Color Clase)", 
-        (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars, 
-        function() return (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars end,
-        function(val) 
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.classBars = val
-            Interruptio.UI:UpdatePanel()
-        end
-    )
-    Settings.CreateCheckbox(category, classBarsSetting, "Las barras de enfriamiento rellenarán toda su altura con el color de clase estilo clásico, sustituyendo la línea de color dinámico.")
-
-    local showSpellIconSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_ShowSpellIcon", Settings.VarType.Boolean, "Mostrar Icono del Hechizo", 
-        (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon, 
-        function() return (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon end,
-        function(val) 
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.showSpellIcon = val
-            Interruptio.UI:UpdatePanel()
-        end
-    )
-    Settings.CreateCheckbox(category, showSpellIconSetting, "Muestra el icono del hechizo de interrupción a la izquierda del nombre del jugador.")
-
+    Settings.CreateCheckbox(catGen, announceCDSetting, L["OPT_ANNOUNCE_CD_DESC"])
     local testSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
+        catGen, "Interruptio_TestMode", Settings.VarType.Boolean, L["BTN_TEST_MODE"], 
         (InterruptioDB and InterruptioDB.testMode) or false, 
         function() return (InterruptioDB and InterruptioDB.testMode) or false end,
         function(val) 
@@ -1136,11 +1109,94 @@ function Interruptio.UI:CreateSettingsMenu()
             if val then Interruptio.UI.Panel:Show() else Interruptio.UI.Panel:Hide() end
         end
     )
-    Settings.CreateCheckbox(category, testSetting, "Genera un grupo falso para probar la interfaz de cortes.")
+    Settings.CreateCheckbox(catGen, testSetting, L["BTN_TEST_MODE_DESC"])
     
+    -- Mover los debug logs a General
+    local debugSetting = Settings.RegisterProxySetting(
+        catGen, "Interruptio_DebugLogs", Settings.VarType.Boolean, L["OPT_DEBUG"],
+        (InterruptioDB and InterruptioDB.debugLogs) or false,
+        function() return (InterruptioDB and InterruptioDB.debugLogs) or false end,
+        function(val)
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.debugLogs = val
+        end
+    )
+    Settings.CreateCheckbox(catGen, debugSetting, L["OPT_DEBUG_DESC"])
+
+    -- Panel Flotante Subcategory Options
+    local modernSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_ModernUI", Settings.VarType.Boolean, L["OPT_MODERN"], 
+        (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI, 
+        function() return (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.modernUI = val
+            Interruptio.UI:ApplyTheme()
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, modernSetting, L["OPT_MODERN_DESC"])
+    
+    local emphasizeSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, L["OPT_EMPHASIZE"], 
+        (InterruptioDB and InterruptioDB.emphasizeReady) or false, 
+        function() return (InterruptioDB and InterruptioDB.emphasizeReady) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.emphasizeReady = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, emphasizeSetting, L["OPT_EMPHASIZE_DESC"])
+
+    local classBarsSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_ClassBars", Settings.VarType.Boolean, L["OPT_CLASS_BARS"], 
+        (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars, 
+        function() return (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.classBars = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, classBarsSetting, L["OPT_CLASS_BARS_DESC"])
+
+    local showSpellIconSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_ShowSpellIcon", Settings.VarType.Boolean, L["OPT_SPELL_ICON"], 
+        (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon, 
+        function() return (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.showSpellIcon = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, showSpellIconSetting, L["OPT_SPELL_ICON_DESC"])
+
+    local unlockSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_UnlockPanel", Settings.VarType.Boolean, L["BTN_UNLOCK"], 
+        (InterruptioDB and InterruptioDB.unlockPanel) or false, 
+        function() return (InterruptioDB and InterruptioDB.unlockPanel) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.unlockPanel = val
+            if val then
+                Interruptio.UI.Panel.dragOverlay:Show()
+                Interruptio.UI.Panel:Show()
+                Interruptio.UI:UpdatePanel()
+            else
+                Interruptio.UI.Panel.dragOverlay:Hide()
+                if #Interruptio.Marks.Active == 0 and not InterruptioDB.testMode then
+                    Interruptio.UI.Panel:Hide()
+                end
+            end
+        end
+    )
+    Settings.CreateCheckbox(catPanel, unlockSetting, L["BTN_UNLOCK_DESC"])
+    -- Nameplate Subcategory Options
     -- Nameplate Glow
     local glowSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_NameplateGlow", Settings.VarType.Boolean, "Brillo en Nameplate",
+        catNP, "Interruptio_NameplateGlow", Settings.VarType.Boolean, L["OPT_NP_GLOW"],
         (not InterruptioDB or InterruptioDB.nameplateGlow == nil) and true or InterruptioDB.nameplateGlow,
         function() return (not InterruptioDB or InterruptioDB.nameplateGlow == nil) and true or InterruptioDB.nameplateGlow end,
         function(val)
@@ -1149,11 +1205,11 @@ function Interruptio.UI:CreateSettingsMenu()
             Interruptio.UI:UpdateAllNameplates()
         end
     )
-    Settings.CreateCheckbox(category, glowSetting, "Muestra un borde brillante alrededor de la nameplate del mob asignado para cortarte.")
+    Settings.CreateCheckbox(catNP, glowSetting, L["OPT_NP_GLOW_DESC"])
     
     -- Bring to Front Option
     local frontSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_BringToFront", Settings.VarType.Boolean, "Traer barra al Frente (Top Layer)",
+        catNP, "Interruptio_BringToFront", Settings.VarType.Boolean, L["OPT_NP_FRONT"],
         (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront,
         function() return (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront end,
         function(val)
@@ -1162,11 +1218,11 @@ function Interruptio.UI:CreateSettingsMenu()
             Interruptio.UI:UpdateAllNameplates()
         end
     )
-    Settings.CreateCheckbox(category, frontSetting, "Fuerza a la barra de vida de tu objetivo asignado a renderizarse por encima del resto (FrameStrata: DIALOG) cuando tienes la patada asignada.")
+    Settings.CreateCheckbox(catNP, frontSetting, L["OPT_NP_FRONT_DESC"])
     
     -- Nameplate Scale Boost
     local npScaleSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_NPScale", Settings.VarType.Number, "Tamaño de la Barra del Objetivo",
+        catNP, "Interruptio_NPScale", Settings.VarType.Number, L["OPT_NP_SCALE"],
         (InterruptioDB and InterruptioDB.nameplateScaleBoost) or 1.15,
         function() return (InterruptioDB and InterruptioDB.nameplateScaleBoost) or 1.15 end,
         function(val)
@@ -1177,12 +1233,12 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     local npScaleOpts = Settings.CreateSliderOptions(0.8, 2.0, 0.05)
     npScaleOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return string.format("%.2fx", v) end)
-    Settings.CreateSlider(category, npScaleSetting, npScaleOpts, "Escala de la barra de vida del mob asignado.")
+    Settings.CreateSlider(catNP, npScaleSetting, npScaleOpts, L["OPT_NP_SCALE_DESC"])
     
     -- ============================================================
     -- Icon Position (LEFT / RIGHT of nameplate)
     local iconSideSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_IconSide", Settings.VarType.Number, "Lado de los iconos de corte",
+        catNP, "Interruptio_IconSide", Settings.VarType.Number, L["OPT_ICON_SIDE"],
         (InterruptioDB and InterruptioDB.iconSide) or 1,
         function() return (InterruptioDB and InterruptioDB.iconSide) or 1 end,
         function(val)
@@ -1193,17 +1249,17 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     local sideOptions = Settings.CreateSliderOptions(1, 4, 1)
     sideOptions:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v)
-        if v == 1 then return "Izquierda"
-        elseif v == 2 then return "Derecha"
-        elseif v == 3 then return "Arriba"
-        elseif v == 4 then return "Abajo"
+        if v == 1 then return L["VAL_LEFT"]
+        elseif v == 2 then return L["VAL_RIGHT"]
+        elseif v == 3 then return L["VAL_TOP"]
+        elseif v == 4 then return L["VAL_BOTTOM"]
         end
     end)
-    Settings.CreateSlider(category, iconSideSetting, sideOptions, "Punto de anclaje de los iconos respecto a la barra de vida.")
+    Settings.CreateSlider(catNP, iconSideSetting, sideOptions, L["OPT_ICON_SIDE_DESC"])
     
     -- Icon Offset (horizontal distance from health bar edge)
     local iconOffsetSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_IconOffset", Settings.VarType.Number, "Separación horizontal de iconos",
+        catNP, "Interruptio_IconOffset", Settings.VarType.Number, L["OPT_ICON_H_OFFSET"],
         (not InterruptioDB or InterruptioDB.iconOffset == nil) and 30 or InterruptioDB.iconOffset,
         function() return (not InterruptioDB or InterruptioDB.iconOffset == nil) and 30 or InterruptioDB.iconOffset end,
         function(val)
@@ -1214,11 +1270,11 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     local offsetOpts = Settings.CreateSliderOptions(-50, 50, 1)
     offsetOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
-    Settings.CreateSlider(category, iconOffsetSetting, offsetOpts, "Ajusta la distancia horizontal de los iconos respecto al borde de la barra de vida.")
+    Settings.CreateSlider(catNP, iconOffsetSetting, offsetOpts, L["OPT_ICON_H_OFFSET_DESC"])
 
     -- Icon Y Offset (vertical distance)
     local iconOffsetYSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_IconOffsetY", Settings.VarType.Number, "Alineación vertical de iconos",
+        catNP, "Interruptio_IconOffsetY", Settings.VarType.Number, L["OPT_ICON_V_OFFSET"],
         (InterruptioDB and InterruptioDB.iconOffsetY) or 0,
         function() return (InterruptioDB and InterruptioDB.iconOffsetY) or 0 end,
         function(val)
@@ -1229,21 +1285,9 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     local offsetOptsY = Settings.CreateSliderOptions(-50, 50, 1)
     offsetOptsY:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
-    Settings.CreateSlider(category, iconOffsetYSetting, offsetOptsY, "Ajusta la distancia vertical de los iconos respecto a la barra de vida.")
+    Settings.CreateSlider(catNP, iconOffsetYSetting, offsetOptsY, L["OPT_ICON_V_OFFSET_DESC"])
     
-    -- Debug Logs
-    local debugSetting = Settings.RegisterProxySetting(
-        category, "Interruptio_DebugLogs", Settings.VarType.Boolean, "Logs de Debug",
-        (InterruptioDB and InterruptioDB.debugLogs) or false,
-        function() return (InterruptioDB and InterruptioDB.debugLogs) or false end,
-        function(val)
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.debugLogs = val
-        end
-    )
-    Settings.CreateCheckbox(category, debugSetting, "Muestra mensajes de debug en el chat (correlación de señales, red, etc).")
-    
-    Settings.RegisterAddOnCategory(category)
+    -- Eliminada la subida de los Debug Logs aquí porque se pasaron a category junto con Test Mode
 end
 
 -- ============================================================
@@ -1382,3 +1426,4 @@ SlashCmdList["INTERRUPTIO"] = function(msg)
         print("|cFF00FFFF[Interruptio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end
+

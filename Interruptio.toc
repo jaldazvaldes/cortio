@@ -2,11 +2,13 @@
 ## Title: Interruptio
 ## Notes: Asistente de cortes para World of Warcraft
 ## Author: yeye
-## Version: 1.0
+## Version: @project-version@
 ## SavedVariables: InterruptioDB
 
 InterruptioTaint.lua
 InterruptioData.lua
+Locales/enUS.lua
+Locales/esES.lua
 InterruptioNet.lua
 InterruptioRoster.lua
 InterruptioMarks.lua
