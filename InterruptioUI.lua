@@ -782,11 +782,16 @@ function Interruptio.UI:UpdateNameplate(unit)
     
     -- Anclar iconos a la barra de vida con offset configurable por el usuario
     local iconSide = (InterruptioDB and InterruptioDB.iconSide) or 1
-    local iconOffset = (InterruptioDB and InterruptioDB.iconOffset) or 0
+    local iconOffset = (not InterruptioDB or InterruptioDB.iconOffset == nil) and 30 or InterruptioDB.iconOffset
+    local iconOffsetY = (InterruptioDB and InterruptioDB.iconOffsetY) or 0
     if iconSide == 2 then
-        f:SetPoint("LEFT", barFrame, "RIGHT", iconOffset, 0)
+        f:SetPoint("LEFT", barFrame, "RIGHT", iconOffset, iconOffsetY)
+    elseif iconSide == 3 then
+        f:SetPoint("BOTTOMRIGHT", barFrame, "TOPRIGHT", iconOffset, 2 + iconOffsetY)
+    elseif iconSide == 4 then
+        f:SetPoint("TOPRIGHT", barFrame, "BOTTOMRIGHT", iconOffset, -2 + iconOffsetY)
     else
-        f:SetPoint("RIGHT", barFrame, "LEFT", -iconOffset, 0)
+        f:SetPoint("RIGHT", barFrame, "LEFT", -iconOffset, iconOffsetY)
     end
     f:Show()
     
@@ -1036,6 +1041,17 @@ function Interruptio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(category, announceSetting, "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca.")
+
+    local announceCDSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_AnnounceCD", Settings.VarType.Boolean, "Anunciar tu CD al marcar", 
+        (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD, 
+        function() return (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD end,
+        function(val)  
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.announceCD = val 
+        end
+    )
+    Settings.CreateCheckbox(category, announceCDSetting, "Añade el tiempo de recarga (CD) que le queda a tu corte en el mensaje de chat al asignar una marca.")
     
     local modernSetting = Settings.RegisterProxySetting(
         category, "Interruptio_ModernUI", Settings.VarType.Boolean, "UI Moderna (Translúcida & Fluida)", 
@@ -1052,8 +1068,8 @@ function Interruptio.UI:CreateSettingsMenu()
     
     local emphasizeSetting = Settings.RegisterProxySetting(
         category, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, "Resaltar Disp. (Atenuación + Latido)", 
-        (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady, 
-        function() return (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady end,
+        (InterruptioDB and InterruptioDB.emphasizeReady) or false, 
+        function() return (InterruptioDB and InterruptioDB.emphasizeReady) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.emphasizeReady = val
@@ -1064,8 +1080,8 @@ function Interruptio.UI:CreateSettingsMenu()
 
     local classBarsSetting = Settings.RegisterProxySetting(
         category, "Interruptio_ClassBars", Settings.VarType.Boolean, "Barras Progeso Clásicas (Color Clase)", 
-        (InterruptioDB and InterruptioDB.classBars) or false, 
-        function() return (InterruptioDB and InterruptioDB.classBars) or false end,
+        (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars, 
+        function() return (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.classBars = val
@@ -1152,17 +1168,21 @@ function Interruptio.UI:CreateSettingsMenu()
             Interruptio.UI:UpdateAllNameplates()
         end
     )
-    local sideOptions = Settings.CreateSliderOptions(1, 2, 1)
+    local sideOptions = Settings.CreateSliderOptions(1, 4, 1)
     sideOptions:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v)
-        return v == 1 and "Izquierda" or "Derecha"
+        if v == 1 then return "Izquierda"
+        elseif v == 2 then return "Derecha"
+        elseif v == 3 then return "Arriba"
+        elseif v == 4 then return "Abajo"
+        end
     end)
-    Settings.CreateSlider(category, iconSideSetting, sideOptions, "En qué lado de la barra de vida del mob aparecen los iconos de interrupción.")
+    Settings.CreateSlider(category, iconSideSetting, sideOptions, "Punto de anclaje de los iconos respecto a la barra de vida.")
     
     -- Icon Offset (horizontal distance from health bar edge)
     local iconOffsetSetting = Settings.RegisterProxySetting(
         category, "Interruptio_IconOffset", Settings.VarType.Number, "Separación horizontal de iconos",
-        (InterruptioDB and InterruptioDB.iconOffset) or 0,
-        function() return (InterruptioDB and InterruptioDB.iconOffset) or 0 end,
+        (not InterruptioDB or InterruptioDB.iconOffset == nil) and 30 or InterruptioDB.iconOffset,
+        function() return (not InterruptioDB or InterruptioDB.iconOffset == nil) and 30 or InterruptioDB.iconOffset end,
         function(val)
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.iconOffset = val
@@ -1172,6 +1192,21 @@ function Interruptio.UI:CreateSettingsMenu()
     local offsetOpts = Settings.CreateSliderOptions(-50, 50, 1)
     offsetOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
     Settings.CreateSlider(category, iconOffsetSetting, offsetOpts, "Ajusta la distancia horizontal de los iconos respecto al borde de la barra de vida.")
+
+    -- Icon Y Offset (vertical distance)
+    local iconOffsetYSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_IconOffsetY", Settings.VarType.Number, "Alineación vertical de iconos",
+        (InterruptioDB and InterruptioDB.iconOffsetY) or 0,
+        function() return (InterruptioDB and InterruptioDB.iconOffsetY) or 0 end,
+        function(val)
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.iconOffsetY = val
+            Interruptio.UI:UpdateAllNameplates()
+        end
+    )
+    local offsetOptsY = Settings.CreateSliderOptions(-50, 50, 1)
+    offsetOptsY:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
+    Settings.CreateSlider(category, iconOffsetYSetting, offsetOptsY, "Ajusta la distancia vertical de los iconos respecto a la barra de vida.")
     
     -- Debug Logs
     local debugSetting = Settings.RegisterProxySetting(

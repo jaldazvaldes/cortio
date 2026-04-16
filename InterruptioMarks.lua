@@ -105,29 +105,54 @@ function Interruptio.Marks:UpdateSecureBtnMacro()
     if InCombatLockdown() then return end
     local slot = Interruptio.Marks:GetPlayerMarkerSlotSafe()
     local lines = {"/targetmarker " .. tostring(slot)}
-    -- Always include the announce: when SendAddonMessage fails (result=11 in M+),
-    -- this is the ONLY way to sync markers. The CHAT_MSG parser on the other end
-    -- reads this message to update the marker UI.
-    local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
-    if #sName > 12 then sName = sName:sub(1, 12) end
-    local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
-    
     table.insert(lines, "/stopmacro [noexists]")
-    local txt = "[Interruptio] Assigned " .. chatIcon .. " (" .. sName .. ")"
-    
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        table.insert(lines, "/i " .. txt)
-    elseif IsInRaid() then
-        table.insert(lines, "/ra " .. txt)
-    elseif IsInGroup() then
-        table.insert(lines, "/p " .. txt)
-    end
     InterruptioMarkSABT:SetAttribute("macrotext", table.concat(lines, "\n"))
     InterruptioMarkSABT:SetAttribute("markerSlot", slot)
 end
 
 function Interruptio.Marks:HandlePostClick(self, button, down)
     if not down then return end
+
+    -- SYNC BLOCK (Hardware Event Valid here)
+    -- Lo ejecutamos antes del C_Timer.After para conservar el token de hardware y poder usar SendChatMessage
+    local sourceUnit = "target"
+    if UnitExists(sourceUnit) then
+        local currentTargetGUIDSync = UnitGUID(sourceUnit)
+        local isToggleOffSync = false
+        local _slotSync = Interruptio.Marks:GetPlayerMarkerSlotSafe()
+        for _, m in ipairs(Interruptio.Marks.Active) do
+            if m.playerName == Interruptio.PlayerName and m.targetGUID and m.targetGUID == currentTargetGUIDSync then
+                isToggleOffSync = true
+                break
+            end
+        end
+        
+        if not isToggleOffSync then
+            local chSync
+            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then chSync = "INSTANCE_CHAT"
+            elseif IsInRaid() then chSync = "RAID"
+            elseif IsInGroup() then chSync = "PARTY"
+            end
+            
+            if chSync then
+                local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
+                local chatIcon = _slotSync > 0 and ("{rt" .. _slotSync .. "}") or ""
+                local txt = "[Interruptio] Assigned " .. chatIcon .. " (" .. sName .. ")"
+                
+                if InterruptioDB and InterruptioDB.announceCD then
+                    Interruptio.Roster:EnsurePlayerInfo()
+                    local pData = Interruptio.RosterList[Interruptio.PlayerName]
+                    if pData and pData.cdEnd and pData.cdEnd > GetTime() then
+                        local rem = pData.cdEnd - GetTime()
+                        txt = txt .. " - cd " .. math.floor(rem) .. "s"
+                    elseif pData then
+                        txt = txt .. " - READY"
+                    end
+                end
+                SendChatMessage(txt, chSync)
+            end
+        end
+    end
 
     C_Timer.After(0.05, function()
         Interruptio.Roster:EnsurePlayerInfo()
@@ -165,7 +190,7 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
         
         if not UnitExists(sourceUnit) then
             Interruptio.Marks:ClearPlayerMark(Interruptio.PlayerName)
-            if Interruptio.UI then Interruptio.UI:UpdatePanel() end
+            if Interruptio.UI then Interruptio.UI:UpdatePanel() Interruptio.UI:UpdateAllNameplates() end
             if ch then
                 table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msgUnmark, channel=ch, tag="Send"})
             end
@@ -173,7 +198,30 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             return
         end
 
+        local currentTargetGUID = UnitGUID(sourceUnit)
+        local isToggleOff = false
+        for _, m in ipairs(Interruptio.Marks.Active) do
+            if m.playerName == Interruptio.PlayerName then
+                if m.targetGUID and m.targetGUID == currentTargetGUID then
+                    isToggleOff = true
+                end
+                break
+            end
+        end
+
         Interruptio.Marks:ClearPlayerMark(Interruptio.PlayerName)
+
+        if isToggleOff then
+            if Interruptio.UI then 
+                Interruptio.UI:UpdatePanel() 
+                Interruptio.UI:UpdateAllNameplates() 
+            end
+            if ch then
+                table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msgUnmark, channel=ch, tag="Send"})
+            end
+            print("|cFF00FFFF[Interruptio]|r Corte retirado.")
+            return
+        end
 
         table.insert(Interruptio.Marks.Active, {
             playerName = Interruptio.PlayerName,
@@ -183,6 +231,7 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             remoteCDDuration = 0,
             nameplateUnit = nil,
             unitToken = "target",
+            targetGUID = currentTargetGUID,
             markId = markId,
             markerSlot = slot
         })

@@ -802,36 +802,40 @@ C_Timer.After(3, function()
         
         -- Check if interrupt is on CD (>1.5s to exclude GCD)
         if cleanDur > 1.5 and cleanStart > 0 then
-            -- Is this a NEW cooldown start?
-            if math.abs(cleanStart - _cleanLastCDStart) > 1 then
+            -- Is this a NEW cooldown start or a CD reduction shift?
+            if math.abs(cleanStart - _cleanLastCDStart) > 0.5 then
                 _cleanLastCDStart = cleanStart
                 
-                -- Throttle
                 local now = GetTime()
-                if now - _cleanLastBroadcastTime < 2 then return end
-                _cleanLastBroadcastTime = now
+                local exactCDEnd = cleanStart + cleanDur
+                local remaining = exactCDEnd - now
                 
-                local cdDur = math.floor(cleanDur + 0.5)
-                
-                -- === UPDATE LOCAL UI ===
-                if Interruptio.RosterList then
-                    for rName, rData in pairs(Interruptio.RosterList) do
-                        local short = strsplit("-", rName) or rName
-                        if short == playerName or rName == playerName then
-                            rData.cdEnd = now + cdDur
-                            rData.cdTotal = cdDur
-                            break
+                -- Si ya expiró, no re-transmitir
+                if remaining > 0 then
+                    if now - _cleanLastBroadcastTime < 0.5 then return end
+                    _cleanLastBroadcastTime = now
+                    
+                    -- === UPDATE LOCAL UI ===
+                    if Interruptio.RosterList then
+                        for rName, rData in pairs(Interruptio.RosterList) do
+                            local short = strsplit("-", rName) or rName
+                            if short == playerName or rName == playerName then
+                                rData.cdEnd = exactCDEnd
+                                rData.cdTotal = cleanDur
+                                break
+                            end
                         end
                     end
+                    Interruptio.UI:UpdatePanel()
+                    Interruptio.StartPanelTicker()
+                    pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
+                    
+                    -- === BROADCAST ===
+                    -- Enviamos el TIEMPO RESTANTE real para que el cliente sincronice su cdEnd = now + remaining
+                    Interruptio.Net:SendGroupMessage("V1|CD|" .. string.format("%.2f", remaining), "CD")
+                    
+                    if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00CLEAN INTERRUPT|r rem=" .. remaining) end
                 end
-                Interruptio.UI:UpdatePanel()
-                Interruptio.StartPanelTicker()
-                pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
-                
-                -- === BROADCAST via SendAddonMessage (keep trying, might work outside instances) ===
-                Interruptio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
-                
-                if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00CLEAN INTERRUPT|r CD=" .. cdDur .. "s") end
             end
         end
     end)
@@ -846,8 +850,11 @@ Interruptio.PanelTicker = nil
 
 function Interruptio.StartPanelTicker()
     if Interruptio.PanelTicker then return end
-    Interruptio.PanelTicker = C_Timer.NewTicker(0.25, function()
+    -- Aumentamos el tick rate drásticamente (30 actualizaciones por segundo) 
+    -- para asegurar que la bajada de las barras sea completamente fluida y suave.
+    Interruptio.PanelTicker = C_Timer.NewTicker(0.033, function()
         if Interruptio.UI.Panel and Interruptio.UI.Panel:IsShown() then
+            -- Llamar UpdatePanel() a 30fps es muy barato al ser solo para 5 mienbros de party.
             Interruptio.UI:UpdatePanel()
         end
         Interruptio.UI:UpdateAllNameplates()
