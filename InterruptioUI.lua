@@ -231,13 +231,40 @@ local function getBar(index)
     bar.strip:SetHeight(STRIP_HEIGHT)
     bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
 
-    bar._targetStripW = 1
+    bar.cdEnd = 0
+    bar.cdTotal = 0
+    bar.maxStripW = 1
+    bar.hex = "00FF00"
+    
     bar.strip:SetWidth(1)
+    
     bar:SetScript("OnUpdate", function(self, elapsed)
-        local currW = self.strip:GetWidth()
-        if self._targetStripW and math.abs(currW - self._targetStripW) > 0.5 then
-            self.strip:SetWidth(currW + (self._targetStripW - currW) * 15 * elapsed)
+        if not self.cdEnd or self.cdEnd <= 0 or not self.cdTotal or self.cdTotal <= 0 then
+            return
         end
+        
+        local now = GetTime()
+        local remaining = self.cdEnd - now
+        
+        if remaining <= 0 then
+            self.cdEnd = 0
+            Interruptio.UI:UpdatePanel()
+            return
+        end
+        
+        local text
+        if remaining >= 10 then
+            text = math.floor(remaining) .. "s"
+        else
+            text = string.format("%.1fs", remaining)
+        end
+        self.statusText:SetText("|cff" .. self.hex .. text .. "|r")
+        
+        local progress = (self.cdTotal - remaining) / self.cdTotal
+        if progress < 0 then progress = 0 end
+        if progress > 1 then progress = 1 end
+        local stripW = math.max(1, self.maxStripW * progress)
+        self.strip:SetWidth(stripW)
     end)
     
     -- Flash glow overlay for ready state
@@ -413,15 +440,12 @@ function Interruptio.UI:UpdatePanel()
                 bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], modern and 0.6 or 0.25)
             end
             
+            bar.cdEnd = 0
             bar.statusText:SetText("|cff" .. HEX_READY .. "READY|r")
             -- Icon cooldown: clear
             bar.iconCD:SetCooldown(0, 0)
             -- Progress strip: full width, green
-            if modern then
-                bar._targetStripW = maxStripW
-            else
-                bar.strip:SetWidth(maxStripW)
-            end
+            bar.strip:SetWidth(maxStripW)
             
             if isClassBars then
                 bar.strip:SetColorTexture(classR, classG, classB, 0.85)
@@ -453,6 +477,12 @@ function Interruptio.UI:UpdatePanel()
                 bar.border:SetBackdropBorderColor(r, g, b, modern and 0.2 or 0.15)
             end
 
+            -- Pass data to OnUpdate script for fluid rendering
+            bar.cdEnd = entry.cdEnd
+            bar.cdTotal = entry.cdTotal
+            bar.maxStripW = maxStripW
+            bar.hex = hex
+
             local text
             if entry.remaining >= 10 then
                 text = math.floor(entry.remaining) .. "s"
@@ -469,14 +499,7 @@ function Interruptio.UI:UpdatePanel()
             if progress < 0 then progress = 0 end
             if progress > 1 then progress = 1 end
             local stripW = math.max(1, maxStripW * progress)
-            if modern then
-                bar._targetStripW = stripW
-                if math.abs(bar.strip:GetWidth() - stripW) > barWidth / 2 then
-                    bar.strip:SetWidth(stripW)
-                end
-            else
-                bar.strip:SetWidth(stripW)
-            end
+            bar.strip:SetWidth(stripW)
             
             if isClassBars then
                 bar.strip:SetColorTexture(classR, classG, classB, 0.85)

@@ -850,11 +850,11 @@ Interruptio.PanelTicker = nil
 
 function Interruptio.StartPanelTicker()
     if Interruptio.PanelTicker then return end
-    -- Aumentamos el tick rate drásticamente (30 actualizaciones por segundo) 
-    -- para asegurar que la bajada de las barras sea completamente fluida y suave.
-    Interruptio.PanelTicker = C_Timer.NewTicker(0.033, function()
+    -- Limitador de frames devuelto a 0.25s porque llamar UpdateAllNameplates (40 frames)
+    -- y UpdatePanel a 30fps consume recursos bestiales. 
+    -- La fluidez real la gestionaremos desde los scripts OnUpdate propios de cada barra local.
+    Interruptio.PanelTicker = C_Timer.NewTicker(0.25, function()
         if Interruptio.UI.Panel and Interruptio.UI.Panel:IsShown() then
-            -- Llamar UpdatePanel() a 30fps es muy barato al ser solo para 5 mienbros de party.
             Interruptio.UI:UpdatePanel()
         end
         Interruptio.UI:UpdateAllNameplates()
