@@ -119,9 +119,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Interruptio.Marks:QueueSecureBtnUpdate()
         
         C_Timer.After(1, function() Interruptio.Roster:AutoRegisterByClass(); Interruptio.Roster:RegisterPartyWatchers() end)
-        C_Timer.After(2, function() Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
         C_Timer.After(3, function() Interruptio.Roster:AutoRegisterByClass(); Interruptio.Roster:RegisterPartyWatchers(); Interruptio.UI:UpdatePanel() end)
-        C_Timer.After(5, function() Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq") end)
         
         Interruptio.UI:SetupKickIcon()
         
@@ -160,7 +158,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             Interruptio.Roster:AutoRegisterByClass()
             Interruptio.RegisterPartyInterruptWatchers()
             Interruptio.UI:UpdatePanel()
-            Interruptio.Net:SendGroupMessage("V1|SYNCREQ", "SyncReq")
         end)
         C_Timer.After(3, function()
             if not Interruptio._active then return end
@@ -208,9 +205,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
             end
 
             if shouldClear then
-                if mark.playerName == Interruptio.PlayerName then
-                    Interruptio.Net:SendGroupMessage("V1|UNMARK", "Send")
-                end
                 table.remove(Interruptio.Marks.Active, i)
                 cleared = true
             end
@@ -218,7 +212,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         if cleared then Interruptio.UI:UpdatePanel() end
         
     elseif event == "CHAT_MSG_ADDON" then
-        if arg1 == Interruptio.Data.COMM_PREFIX then
+        if false then
             local _, sender = ...
             if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00ADDON_MSG|r prefix=" .. tostring(arg1) .. " msg=" .. tostring(arg2) .. " sender=" .. tostring(sender)) end
             if not sender then return end
@@ -354,8 +348,8 @@ chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     local ok2 = pcall(rawset, {}, cleanText, true)
     if not ok2 then return end
     
-    -- Parse macro format: "[Interruptio] Assigned {rt8} (Annarya)"
-    local slotStr, playerName = string.match(cleanText, "%[Interruptio%] Assigned %{rt(%d+)%} %((.-)%)")
+    -- Parse macro format universally (ignores localized text)
+    local slotStr, playerName = string.match(cleanText, "%[Interruptio%].-%{rt(%d+)%}.-%((.-)%)")
     if not slotStr or not playerName then return end
     
     local slot = tonumber(slotStr)

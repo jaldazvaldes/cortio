@@ -106,54 +106,29 @@ function Interruptio.Marks:UpdateSecureBtnMacro()
     local slot = Interruptio.Marks:GetPlayerMarkerSlotSafe()
     local lines = {"/targetmarker " .. tostring(slot)}
     table.insert(lines, "/stopmacro [noexists]")
+    
+    if not InterruptioDB or InterruptioDB.announce ~= false then
+        local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
+        local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
+        local txt = string.format(Interruptio.L["MSG_ASSIGNED_SELF"] or "[Interruptio] Assigned %s (%s)", chatIcon, sName)
+        
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+            table.insert(lines, "/i " .. txt)
+        elseif IsInRaid() then
+            table.insert(lines, "/ra " .. txt)
+        elseif IsInGroup() then
+            table.insert(lines, "/p " .. txt)
+        else
+            table.insert(lines, "/p " .. txt)
+        end
+    end
+    
     InterruptioMarkSABT:SetAttribute("macrotext", table.concat(lines, "\n"))
     InterruptioMarkSABT:SetAttribute("markerSlot", slot)
 end
 
 function Interruptio.Marks:HandlePostClick(self, button, down)
     if not down then return end
-
-    -- SYNC BLOCK (Hardware Event Valid here)
-    -- Lo ejecutamos antes del C_Timer.After para conservar el token de hardware y poder usar SendChatMessage
-    local sourceUnit = "target"
-    if UnitExists(sourceUnit) then
-        local currentTargetGUIDSync = UnitGUID(sourceUnit)
-        local isToggleOffSync = false
-        local _slotSync = Interruptio.Marks:GetPlayerMarkerSlotSafe()
-        for _, m in ipairs(Interruptio.Marks.Active) do
-            if m.playerName == Interruptio.PlayerName and m.targetGUID and m.targetGUID == currentTargetGUIDSync then
-                isToggleOffSync = true
-                break
-            end
-        end
-        
-        if not isToggleOffSync then
-            local chSync
-            if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then chSync = "INSTANCE_CHAT"
-            elseif IsInRaid() then chSync = "RAID"
-            elseif IsInGroup() then chSync = "PARTY"
-            end
-            
-            if chSync then
-                local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
-                local chatIcon = _slotSync > 0 and ("{rt" .. _slotSync .. "}") or ""
-                
-                local txt = string.format(Interruptio.L["MSG_ASSIGNED_SELF"], chatIcon, sName)
-                
-                if InterruptioDB and InterruptioDB.announceCD then
-                    Interruptio.Roster:EnsurePlayerInfo()
-                    local pData = Interruptio.RosterList[Interruptio.PlayerName]
-                    if pData and pData.cdEnd and pData.cdEnd > GetTime() then
-                        local rem = pData.cdEnd - GetTime()
-                        txt = txt .. string.format(Interruptio.L["CD_REMAINING"], math.floor(rem))
-                    elseif pData then
-                        txt = txt .. (Interruptio.L["READY_SUFFIX"] or " - READY")
-                    end
-                end
-                SendChatMessage(txt, chSync)
-            end
-        end
-    end
 
     C_Timer.After(0.05, function()
         Interruptio.Roster:EnsurePlayerInfo()
@@ -192,37 +167,12 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
         if not UnitExists(sourceUnit) then
             Interruptio.Marks:ClearPlayerMark(Interruptio.PlayerName)
             if Interruptio.UI then Interruptio.UI:UpdatePanel() Interruptio.UI:UpdateAllNameplates() end
-            if ch then
-                table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msgUnmark, channel=ch, tag="Send"})
-            end
+
             print("|cFF00FFFF[Interruptio]|r Corte retirado (sin objetivo).")
             return
         end
 
-        local currentTargetGUID = UnitGUID(sourceUnit)
-        local isToggleOff = false
-        for _, m in ipairs(Interruptio.Marks.Active) do
-            if m.playerName == Interruptio.PlayerName then
-                if m.targetGUID and m.targetGUID == currentTargetGUID then
-                    isToggleOff = true
-                end
-                break
-            end
-        end
-
         Interruptio.Marks:ClearPlayerMark(Interruptio.PlayerName)
-
-        if isToggleOff then
-            if Interruptio.UI then 
-                Interruptio.UI:UpdatePanel() 
-                Interruptio.UI:UpdateAllNameplates() 
-            end
-            if ch then
-                table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msgUnmark, channel=ch, tag="Send"})
-            end
-            print("|cFF00FFFF[Interruptio]|r Corte retirado.")
-            return
-        end
 
         table.insert(Interruptio.Marks.Active, {
             playerName = Interruptio.PlayerName,
@@ -232,21 +182,18 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             remoteCDDuration = 0,
             nameplateUnit = nil,
             unitToken = "target",
-            targetGUID = currentTargetGUID,
             markId = markId,
             markerSlot = slot
         })
 
-        if ch then
-            table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msgMark, channel=ch, tag="Send"})
-        end
+
 
         if Interruptio.UI then
             Interruptio.UI:UpdatePanel()
             Interruptio.UI:UpdateAllNameplates()
         end
 
-        local targetName = UnitName(sourceUnit)
+        local targetName = Interruptio.Taint:SafeUnitName(sourceUnit)
         if not targetName then return end
         
         local iconStr = Interruptio.Data:GetRaidIconString(slot, 14)
@@ -256,27 +203,5 @@ end
 InterruptioMarkSABT:HookScript("PostClick", function(self, button, down) Interruptio.Marks:HandlePostClick(self, button, down) end)
 
 function Interruptio.Marks:BroadcastCurrentMark()
-    if not Interruptio.PlayerName or not Interruptio.PlayerClass then return end
-    local ch
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then ch = "INSTANCE_CHAT"
-    elseif IsInRaid() then ch = "RAID"
-    elseif IsInGroup() then ch = "PARTY"
-    end
-    if not ch then return end
-    for _, m in ipairs(Interruptio.Marks.Active) do
-        if m.playerName == Interruptio.PlayerName or Interruptio.Data:ShortName(m.playerName) == Interruptio.Data:ShortName(Interruptio.PlayerName) then
-            local rawSI = m.specIcon
-            local cleanSI = "0"
-            if rawSI and rawSI ~= "0" then
-                local n = tonumber(rawSI)
-                if n then
-                    local c = Interruptio.Taint:ResolveNumber(n)
-                    cleanSI = c and tostring(c) or "0"
-                end
-            end
-            local msg = "V1|MARK|"..Interruptio.PlayerClass.."|"..cleanSI.."|"..(m.markId or "0").."|"..(m.markerSlot or "0").."|0"
-            table.insert(Interruptio.Net.Queue, {prefix=Interruptio.Data.COMM_PREFIX, msg=msg, channel=ch, tag="BroadcastMark"})
-            return
-        end
-    end
+    -- Eliminado (sin AddonMessages)
 end

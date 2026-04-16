@@ -9,7 +9,6 @@ InterruptioTaint.lua
 InterruptioData.lua
 Locales/enUS.lua
 Locales/esES.lua
-InterruptioNet.lua
 InterruptioRoster.lua
 InterruptioMarks.lua
 InterruptioUI.lua
