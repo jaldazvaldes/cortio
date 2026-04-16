@@ -823,10 +823,7 @@ C_Timer.After(3, function()
                     Interruptio.StartPanelTicker()
                     pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
                     
-                    -- === BROADCAST ===
-                    -- Enviamos el TIEMPO RESTANTE real para que el cliente sincronice su cdEnd = now + remaining
-                    Interruptio.Net:SendGroupMessage("V1|CD|" .. string.format("%.2f", remaining), "CD")
-                    
+                    -- Eliminado broadcast porque no hay red oculta                    
                     if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00CLEAN INTERRUPT|r rem=" .. remaining) end
                 end
             end
