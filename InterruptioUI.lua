@@ -351,13 +351,50 @@ function Interruptio.UI:UpdatePanel()
 
         local modern = (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI
         local emphasize = (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady
+        local isClassBars = InterruptioDB and InterruptioDB.classBars
+        local showIcon = (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon
+        local maxStripW
+
+        bar.strip:ClearAllPoints()
+
+        if isClassBars then
+            bar.classStripe:Hide()
+            if showIcon then
+                bar.icon:SetPoint("LEFT", 4, 0)
+                bar.iconBg:ClearAllPoints()
+                bar.iconBg:SetPoint("CENTER", bar.icon, "CENTER", 0, 0)
+                bar.strip:SetPoint("LEFT", bar.iconBg, "RIGHT", 0, 0)
+                maxStripW = barWidth - 25
+            else
+                bar.strip:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                maxStripW = barWidth
+            end
+            bar.strip:SetHeight(BAR_HEIGHT)
+            bar.strip:SetDrawLayer("BORDER")
+        else
+            bar.classStripe:Show()
+            if showIcon then
+                bar.icon:SetPoint("LEFT", 7, 0)
+                bar.iconBg:ClearAllPoints()
+                bar.iconBg:SetPoint("CENTER", bar.icon, "CENTER", 0, 0)
+                bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
+                maxStripW = barWidth - 6
+            else
+                bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
+                maxStripW = barWidth - 6
+            end
+            bar.strip:SetHeight(STRIP_HEIGHT)
+            bar.strip:SetDrawLayer("ARTWORK", 4)
+        end
 
         -- State-dependent visuals
         if entry.isReady then
             if not bar._wasReady then
                 bar._wasReady = true
-                if modern and emphasize and barWidth > 10 then bar.flashAG:Play() end
+                if modern and emphasize and barWidth > 10 and not isClassBars then bar.flashAG:Play() end
             end
+            if isClassBars and bar.flashAG:IsPlaying() then bar.flashAG:Stop() end
+            
             if emphasize then 
                 bar:SetAlpha(1.0)
                 bar.icon:SetDesaturated(false)
@@ -365,21 +402,32 @@ function Interruptio.UI:UpdatePanel()
             
             -- Ready: subtle bright tint on background, green border
             local bgA = modern and 0.4 or 0.92
-            bar.bg:SetColorTexture(
-                C_BAR_BG[1] + C_READY[1] * 0.04,
-                C_BAR_BG[2] + C_READY[2] * 0.04,
-                C_BAR_BG[3] + C_READY[3] * 0.04, bgA)
-            bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], modern and 0.6 or 0.25)
+            if isClassBars then
+                bar.bg:SetColorTexture(0, 0, 0, modern and 0.4 or 0.7)
+                bar.border:SetBackdropBorderColor(0, 0, 0, 0)
+            else
+                bar.bg:SetColorTexture(
+                    C_BAR_BG[1] + C_READY[1] * 0.04,
+                    C_BAR_BG[2] + C_READY[2] * 0.04,
+                    C_BAR_BG[3] + C_READY[3] * 0.04, bgA)
+                bar.border:SetBackdropBorderColor(C_READY[1], C_READY[2], C_READY[3], modern and 0.6 or 0.25)
+            end
+            
             bar.statusText:SetText("|cff" .. HEX_READY .. "READY|r")
             -- Icon cooldown: clear
             bar.iconCD:SetCooldown(0, 0)
             -- Progress strip: full width, green
             if modern then
-                bar._targetStripW = barWidth - 6
+                bar._targetStripW = maxStripW
             else
-                bar.strip:SetWidth(barWidth - 6)
+                bar.strip:SetWidth(maxStripW)
             end
-            bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], modern and 0.9 or 0.45)
+            
+            if isClassBars then
+                bar.strip:SetColorTexture(classR, classG, classB, 0.85)
+            else
+                bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], modern and 0.9 or 0.45)
+            end
         else
             bar._wasReady = false
             if modern then bar.flashAG:Stop() end
@@ -396,8 +444,14 @@ function Interruptio.UI:UpdatePanel()
             local r, g, b, hex = getCooldownColor(ratio)
             local baseBg = modern and {0, 0, 0} or C_BAR_BG
             local bgA = modern and 0.4 or 0.9
-            bar.bg:SetColorTexture(baseBg[1], baseBg[2], baseBg[3], bgA)
-            bar.border:SetBackdropBorderColor(r, g, b, modern and 0.2 or 0.15)
+            
+            if isClassBars then
+                bar.bg:SetColorTexture(0, 0, 0, modern and 0.4 or 0.7)
+                bar.border:SetBackdropBorderColor(0, 0, 0, 0)
+            else
+                bar.bg:SetColorTexture(baseBg[1], baseBg[2], baseBg[3], bgA)
+                bar.border:SetBackdropBorderColor(r, g, b, modern and 0.2 or 0.15)
+            end
 
             local text
             if entry.remaining >= 10 then
@@ -414,7 +468,7 @@ function Interruptio.UI:UpdatePanel()
             local progress = (entry.cdTotal - entry.remaining) / entry.cdTotal
             if progress < 0 then progress = 0 end
             if progress > 1 then progress = 1 end
-            local stripW = math.max(1, (barWidth - 6) * progress)
+            local stripW = math.max(1, maxStripW * progress)
             if modern then
                 bar._targetStripW = stripW
                 if math.abs(bar.strip:GetWidth() - stripW) > barWidth / 2 then
@@ -423,7 +477,12 @@ function Interruptio.UI:UpdatePanel()
             else
                 bar.strip:SetWidth(stripW)
             end
-            bar.strip:SetColorTexture(r, g, b, modern and 0.8 or 0.5)
+            
+            if isClassBars then
+                bar.strip:SetColorTexture(classR, classG, classB, 0.85)
+            else
+                bar.strip:SetColorTexture(r, g, b, modern and 0.8 or 0.5)
+            end
         end
 
         -- Spell icon (spec-aware)
@@ -438,11 +497,16 @@ function Interruptio.UI:UpdatePanel()
         bar.iconHit._spellID = spellId
 
         local iconID = Interruptio.Data.CLASS_INTERRUPT_ICONS[entry.class]
-        if iconID then
+        if iconID and showIcon then
             bar.icon:SetTexture(tonumber(iconID))
             bar.icon:Show()
+            bar.iconBg:Show()
+            bar.iconHit:Show()
         else
             bar.icon:Hide()
+            bar.iconBg:Hide()
+            bar.iconHit:Hide()
+            bar.iconCD:SetCooldown(0, 0)
         end
 
         -- Class-tinted icon background
@@ -450,18 +514,49 @@ function Interruptio.UI:UpdatePanel()
 
         -- Raid marker
         bar.nameText:ClearAllPoints()
+        bar.marker:ClearAllPoints()
+        bar.flashGlow:ClearAllPoints()
+        
         if entry.markerSlot and entry.markerSlot > 0 then
             bar.marker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. entry.markerSlot)
             bar.marker:Show()
-            bar.nameText:SetPoint("LEFT", bar.marker, "RIGHT", 4, 0)
         else
             bar.marker:Hide()
-            bar.nameText:SetPoint("LEFT", bar.icon, "RIGHT", 6, 0)
         end
+        
+        local textBasePad = 6
+        if showIcon then
+            bar.flashGlow:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 2, 0)
+            if entry.markerSlot and entry.markerSlot > 0 then
+                bar.marker:SetPoint("LEFT", bar.icon, "RIGHT", 4, 0)
+                bar.nameText:SetPoint("LEFT", bar.marker, "RIGHT", 4, 0)
+            else
+                bar.nameText:SetPoint("LEFT", bar.icon, "RIGHT", textBasePad, 0)
+            end
+        else
+            local baseRef = isClassBars and bar or bar.classStripe
+            local anchorPoint = isClassBars and "TOPLEFT" or "TOPRIGHT"
+            local leftAnchorPoint = isClassBars and "LEFT" or "RIGHT"
+            
+            bar.flashGlow:SetPoint("TOPLEFT", baseRef, anchorPoint, 0, 0)
+            
+            if entry.markerSlot and entry.markerSlot > 0 then
+                bar.marker:SetPoint("LEFT", baseRef, leftAnchorPoint, textBasePad, 0)
+                bar.nameText:SetPoint("LEFT", bar.marker, "RIGHT", 4, 0)
+            else
+                bar.nameText:SetPoint("LEFT", baseRef, leftAnchorPoint, textBasePad, 0)
+            end
+        end
+        bar.flashGlow:SetPoint("BOTTOMRIGHT", 0, 0)
+        
         bar.nameText:SetPoint("RIGHT", bar.statusText, "LEFT", -4, 0)
 
         -- Player name (class colored)
-        bar.nameText:SetText("|c" .. colorHex .. Interruptio.Data:ShortName(entry.playerName) .. "|r")
+        if isClassBars then
+            bar.nameText:SetText("|cFFFFFFFF" .. Interruptio.Data:ShortName(entry.playerName) .. "|r")
+        else
+            bar.nameText:SetText("|c" .. colorHex .. Interruptio.Data:ShortName(entry.playerName) .. "|r")
+        end
 
         -- Result indicator
         local resultIcon = ""
@@ -899,66 +994,11 @@ function Interruptio.UI:UpdateAllNameplates()
 end
 
 -- ============================================================
--- Kick Icon (unchanged)
+-- Kick Icon (Removed by user request)
 -- ============================================================
-local kickIconFrame = CreateFrame("Frame", "InterruptioKickIconFrame", panel)
-kickIconFrame:SetSize(32, 32)
-kickIconFrame:SetPoint("RIGHT", panel, "LEFT", -6, 0)
-local kickIconTexture = kickIconFrame:CreateTexture(nil, "ARTWORK")
-kickIconTexture:SetAllPoints(kickIconFrame)
-local kickIconBorder = kickIconFrame:CreateTexture(nil, "OVERLAY")
-kickIconBorder:SetAllPoints(kickIconFrame)
-kickIconBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
-if not kickIconBorder:GetAtlas() then
-    kickIconBorder:SetTexture("Interface\\Buttons\\UI-Quickslot-Depress")
-    kickIconBorder:SetAllPoints(kickIconFrame)
-end
+function Interruptio.UI:UpdateKickCooldown() end
+function Interruptio.UI:SetupKickIcon() end
 
-local kickCooldown = CreateFrame("Cooldown", "InterruptioKickCooldown", kickIconFrame, "CooldownFrameTemplate")
-kickCooldown:SetAllPoints(kickIconFrame)
-kickCooldown:SetDrawSwipe(true)
-kickCooldown:SetDrawEdge(true)
-kickCooldown:SetDrawBling(true)
-kickCooldown:SetSwipeColor(0, 0, 0, 0.65)
-kickCooldown:SetHideCountdownNumbers(false)
-
-function Interruptio.UI:UpdateKickCooldown()
-    local myInterruptSpellID = Interruptio.Data.CLASS_INTERRUPT_SPELLID[Interruptio.PlayerClass]
-    if not myInterruptSpellID or not Interruptio.RosterList[Interruptio.PlayerName] then return end
-    local cdEnd = Interruptio.RosterList[Interruptio.PlayerName].cdEnd
-    local cdTotal = Interruptio.RosterList[Interruptio.PlayerName].cdTotal
-    if cdEnd and cdTotal and cdEnd > GetTime() then
-        kickCooldown:SetCooldown(cdEnd - cdTotal, cdTotal)
-    else
-        kickCooldown:SetCooldown(0, 0)
-    end
-end
-
-function Interruptio.UI:SetupKickIcon()
-    Interruptio.Roster:EnsurePlayerInfo()
-    if not Interruptio.PlayerClass then return end
-
-    local iconID = Interruptio.Data.CLASS_INTERRUPT_ICONS[Interruptio.PlayerClass]
-    if iconID then
-        kickIconTexture:SetTexture(tonumber(iconID))
-        kickIconFrame:Show()
-    else
-        kickIconFrame:Hide()
-    end
-    Interruptio.UI:UpdateKickCooldown()
-end
-
-panel:HookScript("OnShow", function()
-    if Interruptio.Data.CLASS_INTERRUPT_SPELLID[Interruptio.PlayerClass] then
-        kickIconFrame:Show()
-        Interruptio.UI:UpdateKickCooldown()
-    end
-end)
-panel:HookScript("OnHide", function()
-    kickIconFrame:Hide()
-end)
-
-kickIconFrame:Hide()
 panel:Hide()
 
 -- ============================================================
@@ -1021,6 +1061,30 @@ function Interruptio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(category, emphasizeSetting, "Las barras de cortes en enfriamiento se oscurecen al 60% y sus iconos se vuelven grises. Los disponibles laten al 100%.")
+
+    local classBarsSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_ClassBars", Settings.VarType.Boolean, "Barras Progeso Clásicas (Color Clase)", 
+        (InterruptioDB and InterruptioDB.classBars) or false, 
+        function() return (InterruptioDB and InterruptioDB.classBars) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.classBars = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(category, classBarsSetting, "Las barras de enfriamiento rellenarán toda su altura con el color de clase estilo clásico, sustituyendo la línea de color dinámico.")
+
+    local showSpellIconSetting = Settings.RegisterProxySetting(
+        category, "Interruptio_ShowSpellIcon", Settings.VarType.Boolean, "Mostrar Icono del Hechizo", 
+        (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon, 
+        function() return (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.showSpellIcon = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(category, showSpellIconSetting, "Muestra el icono del hechizo de interrupción a la izquierda del nombre del jugador.")
 
     local testSetting = Settings.RegisterProxySetting(
         category, "Interruptio_TestMode", Settings.VarType.Boolean, "Modo de Prueba (Test Mode)", 
