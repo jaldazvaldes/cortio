@@ -687,8 +687,7 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
                     Interruptio.StartPanelTicker()
                     pcall(Interruptio.UI.UpdateKickCooldown, Interruptio.UI)
                     
-                    -- Broadcast to party
-                    Interruptio.Net:SendGroupMessage("V1|CD|" .. cdDur, "CD")
+                    -- Eliminado broadcast porque no hay red oculta
                     
                     if InterruptioDB and InterruptioDB.debugLogs then print("|cFF00FFFF[Interruptio]|r |cFF00FF00OWN KICK|r " .. spellName .. " cd=" .. cdDur .. "s") end
                 end
