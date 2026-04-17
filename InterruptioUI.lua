@@ -1107,6 +1107,9 @@ function Interruptio.UI:CreateSettingsMenu()
         function(val)  
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.autoFocus = val 
+            if Interruptio.Marks and Interruptio.Marks.UpdateSecureBtnMacro then
+                Interruptio.Marks:UpdateSecureBtnMacro()
+            end
         end
     )
     Settings.CreateCheckbox(catGen, autoFocusSetting, L["OPT_AUTO_FOCUS_DESC"] or "Changes focus automatically.")
