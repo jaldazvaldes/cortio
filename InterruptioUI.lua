@@ -1099,6 +1099,17 @@ function Interruptio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(catGen, announceCDSetting, L["OPT_ANNOUNCE_CD_DESC"])
+    
+    local autoFocusSetting = Settings.RegisterProxySetting(
+        catGen, "Interruptio_AutoFocus", Settings.VarType.Boolean, L["OPT_AUTO_FOCUS"], 
+        (InterruptioDB and InterruptioDB.autoFocus) or false, 
+        function() return (InterruptioDB and InterruptioDB.autoFocus) or false end,
+        function(val)  
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.autoFocus = val 
+        end
+    )
+    Settings.CreateCheckbox(catGen, autoFocusSetting, L["OPT_AUTO_FOCUS_DESC"])
     local testSetting = Settings.RegisterProxySetting(
         catGen, "Interruptio_TestMode", Settings.VarType.Boolean, L["BTN_TEST_MODE"], 
         (InterruptioDB and InterruptioDB.testMode) or false, 

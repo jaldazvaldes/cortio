@@ -25,6 +25,8 @@ L["OPT_ANNOUNCE"] = "Announce Assignments"
 L["OPT_ANNOUNCE_DESC"] = "Send a message to party chat (/p) whenever you change your assignment."
 L["OPT_ANNOUNCE_CD"] = "Announce Your CD"
 L["OPT_ANNOUNCE_CD_DESC"] = "Includes your interrupt's remaining cooldown when announcing an assignment."
+L["OPT_AUTO_FOCUS"] = "Auto Focus Target"
+L["OPT_AUTO_FOCUS_DESC"] = "Automatically sets the enemy you assign a mark to as your Focus target."
 L["OPT_DEBUG"] = "Debug Logs"
 L["OPT_DEBUG_DESC"] = "Enable debug prints in the chat frame."
 

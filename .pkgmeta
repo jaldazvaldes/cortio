@@ -1,5 +1,7 @@
 package-as: Interruptio
-
+manual-changelog:
+    filename: CHANGELOG.md
+    markup-type: markdown
 ignore:
     - .git
     - .gitignore

@@ -107,6 +107,9 @@ function Interruptio.Marks:UpdateSecureBtnMacro()
     local lines = {"/targetmarker " .. tostring(slot)}
     table.insert(lines, "/stopmacro [noexists]")
     
+    if InterruptioDB and InterruptioDB.autoFocus then
+        table.insert(lines, "/focus target")
+    end
     if not InterruptioDB or InterruptioDB.announce ~= false then
         local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
         local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"

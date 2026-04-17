@@ -27,6 +27,8 @@ L["OPT_ANNOUNCE"] = "Anunciar asignaciones en grupo"
 L["OPT_ANNOUNCE_DESC"] = "Enviar mensaje al chat de grupo /p cada vez que cambias tu marca."
 L["OPT_ANNOUNCE_CD"] = "Anunciar tu CD al marcar"
 L["OPT_ANNOUNCE_CD_DESC"] = "Añade el tiempo de recarga (CD) que le queda a tu corte en el mensaje de chat al asignar una marca."
+L["OPT_AUTO_FOCUS"] = "Añadir Foco (Focus) Automático"
+L["OPT_AUTO_FOCUS_DESC"] = "Pone en tu Foco automáticamente al objetivo (enemigo) al que le asignas tu marca."
 L["OPT_DEBUG"] = "Logs de Debug"
 L["OPT_DEBUG_DESC"] = "Muestra mensajes de depuración en el chat."
 
