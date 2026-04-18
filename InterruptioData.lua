@@ -123,6 +123,14 @@ Interruptio.Data.SPEC_INTERRUPTS = {
     [267] = { spellId = 19647,  baseCD = 24 },  -- Destruction
 }
 
+-- Base de datos de hechizos letales/críticos para Mythic+
+-- Si el enemigo castea un hechizo cuyo ID está aquí, la placa de nombre brillará en ROJO intenso.
+Interruptio.Data.DANGEROUS_SPELLS = {
+    -- [Ejemplos de hechizos (puedes añadir más aquí)]
+    [372682] = true, -- Ejemplo
+    [385536] = true, -- Ejemplo
+}
+
 function Interruptio.Data:GetRaidIconString(slot, size)
     size = size or 14
     local c = Interruptio.Data.RAID_ICON_COORDS[slot]

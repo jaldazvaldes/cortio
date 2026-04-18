@@ -958,16 +958,50 @@ function Interruptio.UI:UpdateNameplate(unit)
         f.glowInner:SetPoint("TOPLEFT", barFrame, "TOPLEFT", -1, 1)
         f.glowInner:SetPoint("BOTTOMRIGHT", barFrame, "BOTTOMRIGHT", 1, -1)
         
-        -- Color by class
-        if glowMark then
-            local colorHex = Interruptio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
-            local gR = tonumber(colorHex:sub(3, 4), 16) / 255
-            local gG = tonumber(colorHex:sub(5, 6), 16) / 255
-            local gB = tonumber(colorHex:sub(7, 8), 16) / 255
+        -- Smart Glow Logic (Mythic+ Dangerous Spells)
+        local isDangerousCast = false
+        if InterruptioDB and InterruptioDB.smartGlow then
+            local res = {pcall(UnitCastingInfo, unit)}
+            local spellId = nil
+            if res[1] and res[2] then
+                spellId = res[10] -- 9th return of UnitCastingInfo is spellId
+            else
+                local res2 = {pcall(UnitChannelInfo, unit)}
+                if res2[1] and res2[2] then
+                    spellId = res2[9] -- 8th return of UnitChannelInfo is spellId
+                end
+            end
             
-            f.glowOuter:SetColorTexture(gR, gG, gB, 0.15)
-            f.glowMid:SetColorTexture(gR, gG, gB, 0.3)
-            f.glowInner:SetBackdropBorderColor(gR, gG, gB, 0.95)
+            if spellId and Interruptio.Data.DANGEROUS_SPELLS and Interruptio.Data.DANGEROUS_SPELLS[spellId] then
+                isDangerousCast = true
+            end
+        end
+
+        -- Color by class or Dangerous override
+        if glowMark then
+            if isDangerousCast then
+                local gR, gG, gB = 1, 0, 0 -- Intense Red
+                f.glowOuter:SetColorTexture(gR, gG, gB, 0.5)
+                f.glowMid:SetColorTexture(gR, gG, gB, 0.8)
+                f.glowInner:SetBackdropBorderColor(gR, gG, gB, 1.0)
+                
+                -- Speed up pulse animation
+                local anim = f.glowAG:GetAnimations()
+                if anim then anim:SetDuration(0.3) end
+            else
+                local colorHex = Interruptio.Data.CLASS_COLORS[glowMark.playerClass] or "FFFFFFFF"
+                local gR = tonumber(colorHex:sub(3, 4), 16) / 255
+                local gG = tonumber(colorHex:sub(5, 6), 16) / 255
+                local gB = tonumber(colorHex:sub(7, 8), 16) / 255
+                
+                f.glowOuter:SetColorTexture(gR, gG, gB, 0.15)
+                f.glowMid:SetColorTexture(gR, gG, gB, 0.3)
+                f.glowInner:SetBackdropBorderColor(gR, gG, gB, 0.95)
+                
+                -- Normal pulse animation duration
+                local anim = f.glowAG:GetAnimations()
+                if anim then anim:SetDuration(0.8) end
+            end
         end
         
         if not f.glowAG:IsPlaying() then f.glowAG:Play() end
@@ -1308,6 +1342,19 @@ function Interruptio.UI:CreateSettingsMenu()
     local offsetOptsY = Settings.CreateSliderOptions(-50, 50, 1)
     offsetOptsY:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
     Settings.CreateSlider(catNP, iconOffsetYSetting, offsetOptsY, L["OPT_ICON_V_OFFSET_DESC"])
+
+    -- Smart Glow (Mythic+)
+    local smartGlowSetting = Settings.RegisterProxySetting(
+        catNP, "Interruptio_SmartGlow", Settings.VarType.Boolean, L["OPT_SMART_GLOW"] or "Resaltado Inteligente (M+)",
+        (InterruptioDB and InterruptioDB.smartGlow) or false,
+        function() return (InterruptioDB and InterruptioDB.smartGlow) or false end,
+        function(val)
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.smartGlow = val
+            Interruptio.UI:UpdateAllNameplates()
+        end
+    )
+    Settings.CreateCheckbox(catNP, smartGlowSetting, L["OPT_SMART_GLOW_DESC"] or "Cambia el brillo de la placa a rojo intenso si el enemigo lanza un hechizo letal.")
     
     -- Eliminada la subida de los Debug Logs aquí porque se pasaron a category junto con Test Mode
 end
