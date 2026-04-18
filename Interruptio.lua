@@ -132,8 +132,10 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Interruptio.Marks:QueueSecureBtnUpdate()
         
     elseif event == "NAME_PLATE_UNIT_ADDED" or event == "FORBIDDEN_NAME_PLATE_UNIT_ADDED" then
+        if not Interruptio._active then return end
         Interruptio.UI:UpdateNameplate(arg1)
     elseif event == "NAME_PLATE_UNIT_REMOVED" or event == "FORBIDDEN_NAME_PLATE_UNIT_REMOVED" then
+        if not Interruptio._active then return end
         for _, mark in ipairs(Interruptio.Marks.Active) do
             if mark.nameplateUnit == arg1 then
                 mark.nameplateUnit = nil
@@ -142,7 +144,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Interruptio.UI:ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
-        Interruptio.SetActive(not IsInRaid())
+        local disableRaid = (InterruptioDB and InterruptioDB.disableInRaid) or false
+        Interruptio.SetActive(not (IsInRaid() and disableRaid))
         if not Interruptio._active then return end
         Interruptio.Roster:Rebuild()
         Interruptio.Roster:AutoRegisterByClass()
@@ -184,6 +187,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         end)
 
     elseif event == "UNIT_DIED" then
+        if not Interruptio._active then return end
         local cleared = false
         local ok, isTargetStr = pcall(function() return arg1 == "target" end)
         isTargetStr = ok and isTargetStr
@@ -337,6 +341,7 @@ chatFrame:RegisterEvent("CHAT_MSG_RAID")
 chatFrame:RegisterEvent("CHAT_MSG_RAID_LEADER")
 
 chatFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
+    if not Interruptio._active then return end
     if not arg1 then return end
     
     -- WoW 12.0: chat message text can be tainted.
@@ -648,6 +653,14 @@ function Interruptio.SetActive(active)
         _interruptFrame:UnregisterAllEvents()
         if Interruptio.UI and Interruptio.UI.Panel then Interruptio.UI.Panel:Hide() end
         if Interruptio.PanelTicker then Interruptio.PanelTicker:Cancel(); Interruptio.PanelTicker = nil end
+        
+        -- Thorough cleanup when disabled
+        if Interruptio.Marks then Interruptio.Marks.Active = {} end
+        if Interruptio.UI and Interruptio.UI.ActiveNameplates then
+            for unit, _ in pairs(Interruptio.UI.ActiveNameplates) do
+                Interruptio.UI:ReleaseNameplateFrame(unit)
+            end
+        end
     end
 end
 -- Start active (solo/party). GROUP_ROSTER_UPDATE will deactivate in raids.

@@ -306,6 +306,14 @@ end
 -- UpdatePanel (Cooldown spiral + progress strip rendering)
 -- ============================================================
 function Interruptio.UI:UpdatePanel()
+    if Interruptio and Interruptio._active == false then
+        local forceShow = InterruptioDB and (InterruptioDB.testMode or InterruptioDB.unlockPanel)
+        if not forceShow then
+            panel:Hide()
+            return
+        end
+    end
+
     -- Hide all existing bars
     for i = 1, activeBarCount do
         if barPool[i] then barPool[i]:Hide() end
@@ -1144,6 +1152,24 @@ function Interruptio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(catGen, debugSetting, L["OPT_DEBUG_DESC"])
+
+    local disableRaidSetting = Settings.RegisterProxySetting(
+        catGen, "Interruptio_DisableInRaid", Settings.VarType.Boolean, L["OPT_DISABLE_RAID"] or "Desactivar en Banda", 
+        (InterruptioDB and InterruptioDB.disableInRaid) or false, 
+        function() return (InterruptioDB and InterruptioDB.disableInRaid) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.disableInRaid = val 
+            if IsInRaid() then
+                Interruptio.SetActive(not val)
+                if not val then
+                    Interruptio.Roster:Rebuild()
+                    Interruptio.UI:UpdatePanel()
+                end
+            end
+        end
+    )
+    Settings.CreateCheckbox(catGen, disableRaidSetting, L["OPT_DISABLE_RAID_DESC"] or "Desactiva el addon por completo al estar en un grupo de Banda.")
 
     -- Panel Flotante Subcategory Options
     local modernSetting = Settings.RegisterProxySetting(
