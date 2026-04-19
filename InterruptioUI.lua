@@ -48,6 +48,18 @@ local function getCooldownColor(ratio)
     end
 end
 
+local function GetBarTexture()
+    local texName = InterruptioDB and InterruptioDB.barTexture or "Solid"
+    local lsm = LibStub and LibStub("LibSharedMedia-3.0", true)
+    if lsm then
+        local tex = lsm:Fetch("statusbar", texName)
+        if tex then return tex end
+    end
+    if texName == "Blizzard" then return "Interface\\TargetingFrame\\UI-StatusBar" end
+    if texName == "Smooth" then return "Interface\\DialogFrame\\UI-DialogBox-Background" end
+    return "Interface\\BUTTONS\\WHITE8X8"
+end
+
 -- ============================================================
 -- Panel Frame
 -- ============================================================
@@ -143,6 +155,14 @@ function Interruptio.UI:ApplyTheme()
         panel:SetBackdropBorderColor(C_BORDER[1], C_BORDER[2], C_BORDER[3], 0.35)
         headerBg:SetColorTexture(C_HEADER_BG[1], C_HEADER_BG[2], C_HEADER_BG[3], 0.98)
     end
+    
+    if InterruptioDB and InterruptioDB.hideFrame then
+        panelBg:SetColorTexture(0, 0, 0, 0)
+        panel:SetBackdropBorderColor(0, 0, 0, 0)
+        headerFrame:Hide()
+    else
+        headerFrame:Show()
+    end
 end
 Interruptio.UI:ApplyTheme()
 
@@ -167,7 +187,8 @@ local function getBar(index)
     -- Dark row background
     bar.bg = bar:CreateTexture(nil, "BACKGROUND")
     bar.bg:SetAllPoints()
-    bar.bg:SetColorTexture(C_BAR_BG[1], C_BAR_BG[2], C_BAR_BG[3], 0.9)
+    bar.bg:SetTexture(GetBarTexture())
+    bar.bg:SetVertexColor(C_BAR_BG[1], C_BAR_BG[2], C_BAR_BG[3], 0.9)
 
     -- Thin border (state-colored)
     bar.border = CreateFrame("Frame", nil, bar, "BackdropTemplate")
@@ -244,6 +265,7 @@ local function getBar(index)
     bar.strip = bar:CreateTexture(nil, "ARTWORK", nil, 4)
     bar.strip:SetHeight(STRIP_HEIGHT)
     bar.strip:SetPoint("BOTTOMLEFT", 3, 0)
+    bar.strip:SetTexture(GetBarTexture())
 
     bar.cdEnd = 0
     bar.cdTotal = 0
@@ -356,8 +378,14 @@ function Interruptio.UI:UpdatePanel()
     end
 
     if #entries == 0 then
-        panel:Hide()
-        return
+        local hideEarly = true
+        if InterruptioDB and (InterruptioDB.unlockPanel or InterruptioDB.testMode) then
+            hideEarly = false
+        end
+        if hideEarly then
+            panel:Hide()
+            return
+        end
     end
 
     -- Sort: marked first, then ready, then by remaining
@@ -391,8 +419,8 @@ function Interruptio.UI:UpdatePanel()
         bar.classStripe:SetColorTexture(classR, classG, classB, 0.8)
 
         local modern = (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI
-        local emphasize = (not InterruptioDB or InterruptioDB.emphasizeReady == nil) and true or InterruptioDB.emphasizeReady
-        local isClassBars = InterruptioDB and InterruptioDB.classBars
+        local emphasize = (InterruptioDB and InterruptioDB.emphasizeReady) or false
+        local isClassBars = (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars
         local showIcon = (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon
         local maxStripW
 
@@ -400,21 +428,20 @@ function Interruptio.UI:UpdatePanel()
 
         if isClassBars then
             bar.classStripe:Hide()
+            bar.iconBg:Hide()
             if showIcon then
+                bar.icon:ClearAllPoints()
                 bar.icon:SetPoint("LEFT", 4, 0)
-                bar.iconBg:ClearAllPoints()
-                bar.iconBg:SetPoint("CENTER", bar.icon, "CENTER", 0, 0)
-                bar.strip:SetPoint("LEFT", bar.iconBg, "RIGHT", 0, 0)
-                maxStripW = barWidth - 25
-            else
-                bar.strip:SetPoint("LEFT", bar, "LEFT", 0, 0)
-                maxStripW = barWidth
             end
+            bar.strip:SetPoint("LEFT", bar, "LEFT", 0, 0)
+            maxStripW = barWidth
             bar.strip:SetHeight(BAR_HEIGHT)
             bar.strip:SetDrawLayer("BORDER")
         else
             bar.classStripe:Show()
+            bar.iconBg:Show()
             if showIcon then
+                bar.icon:ClearAllPoints()
                 bar.icon:SetPoint("LEFT", 7, 0)
                 bar.iconBg:ClearAllPoints()
                 bar.iconBg:SetPoint("CENTER", bar.icon, "CENTER", 0, 0)
@@ -444,10 +471,10 @@ function Interruptio.UI:UpdatePanel()
             -- Ready: subtle bright tint on background, green border
             local bgA = modern and 0.4 or 0.92
             if isClassBars then
-                bar.bg:SetColorTexture(0, 0, 0, modern and 0.4 or 0.7)
+                bar.bg:SetVertexColor(0, 0, 0, modern and 0.4 or 0.7)
                 bar.border:SetBackdropBorderColor(0, 0, 0, 0)
             else
-                bar.bg:SetColorTexture(
+                bar.bg:SetVertexColor(
                     C_BAR_BG[1] + C_READY[1] * 0.04,
                     C_BAR_BG[2] + C_READY[2] * 0.04,
                     C_BAR_BG[3] + C_READY[3] * 0.04, bgA)
@@ -460,11 +487,11 @@ function Interruptio.UI:UpdatePanel()
             bar.iconCD:SetCooldown(0, 0)
             -- Progress strip: full width, green
             bar.strip:SetWidth(maxStripW)
-            
+            bar.strip:SetTexture(GetBarTexture()) -- refresh texture dynamically
             if isClassBars then
-                bar.strip:SetColorTexture(classR, classG, classB, 0.85)
+                bar.strip:SetVertexColor(classR, classG, classB, 0.85)
             else
-                bar.strip:SetColorTexture(C_READY[1], C_READY[2], C_READY[3], modern and 0.9 or 0.45)
+                bar.strip:SetVertexColor(C_READY[1], C_READY[2], C_READY[3], modern and 0.9 or 0.45)
             end
         else
             bar._wasReady = false
@@ -484,10 +511,10 @@ function Interruptio.UI:UpdatePanel()
             local bgA = modern and 0.4 or 0.9
             
             if isClassBars then
-                bar.bg:SetColorTexture(0, 0, 0, modern and 0.4 or 0.7)
+                bar.bg:SetVertexColor(0, 0, 0, modern and 0.4 or 0.7)
                 bar.border:SetBackdropBorderColor(0, 0, 0, 0)
             else
-                bar.bg:SetColorTexture(baseBg[1], baseBg[2], baseBg[3], bgA)
+                bar.bg:SetVertexColor(baseBg[1], baseBg[2], baseBg[3], bgA)
                 bar.border:SetBackdropBorderColor(r, g, b, modern and 0.2 or 0.15)
             end
 
@@ -514,11 +541,12 @@ function Interruptio.UI:UpdatePanel()
             if progress > 1 then progress = 1 end
             local stripW = math.max(1, maxStripW * progress)
             bar.strip:SetWidth(stripW)
+            bar.strip:SetTexture(GetBarTexture()) -- refresh dynamically
             
             if isClassBars then
-                bar.strip:SetColorTexture(classR, classG, classB, 0.85)
+                bar.strip:SetVertexColor(classR, classG, classB, 0.85)
             else
-                bar.strip:SetColorTexture(r, g, b, modern and 0.8 or 0.5)
+                bar.strip:SetVertexColor(r, g, b, modern and 0.8 or 0.5)
             end
         end
 
@@ -537,7 +565,11 @@ function Interruptio.UI:UpdatePanel()
         if iconID and showIcon then
             bar.icon:SetTexture(tonumber(iconID))
             bar.icon:Show()
-            bar.iconBg:Show()
+            if not isClassBars then
+                bar.iconBg:Show()
+            else
+                bar.iconBg:Hide()
+            end
             bar.iconHit:Show()
         else
             bar.icon:Hide()
@@ -624,6 +656,23 @@ function Interruptio.UI:UpdatePanel()
             panel:SetPoint(p[1], UIParent, p[3], p[4], p[5])
         end
         panel._posRestored = true
+    end
+
+    if InterruptioDB and InterruptioDB.hidePanel then
+        panel:Hide()
+        Interruptio.Data:SafeCall("Nameplates", function() Interruptio.UI:UpdateAllNameplates() end)
+        return
+    end
+
+    if InterruptioDB and InterruptioDB.onlyDungeons then
+        local isInstance, instanceType = IsInInstance()
+        if not isInstance or (instanceType ~= "party" and instanceType ~= "raid" and instanceType ~= "scenario") then
+            if not InterruptioDB.testMode and not InterruptioDB.unlockPanel then
+                panel:Hide()
+                Interruptio.Data:SafeCall("Nameplates", function() Interruptio.UI:UpdateAllNameplates() end)
+                return
+            end
+        end
     end
 
     panel:Show()
@@ -1003,17 +1052,6 @@ function Interruptio.UI:UpdateNameplate(unit)
                 ic:Show()
             end
         end
-        if mark.specIcon and mark.specIcon ~= "0" and mark.specIcon ~= "" then
-            iconIdx = iconIdx + 1
-            if iconIdx <= MAX_ICONS_PER_PLATE then
-                local ic = f.icons[iconIdx]
-                ic.texture:SetTexture(tonumber(mark.specIcon))
-                ic.isLocal = false
-                ic.ownerName = nil
-                ic.cooldown:Clear()
-                ic:Show()
-            end
-        end
     end
     
     for i = iconIdx + 1, MAX_ICONS_PER_PLATE do
@@ -1042,6 +1080,206 @@ function Interruptio.UI:UpdateKickCooldown() end
 function Interruptio.UI:SetupKickIcon() end
 
 panel:Hide()
+
+-- ============================================================
+-- Settings Mockup
+-- ============================================================
+function Interruptio.UI:CreateSettingsMockup(catObj)
+    if self.MockupFrame then return end
+    
+    local FRAME_WIDTH       = 260
+    local HEADER_HEIGHT     = 28
+    local BAR_HEIGHT        = 26
+    local ICON_SIZE         = 20
+    local PADDING           = 6
+    local BAR_GAP           = 2
+    local HEADER_GAP        = 2
+    
+    local mf = CreateFrame("Frame", nil, SettingsPanel, "BackdropTemplate")
+    self.MockupFrame = mf
+    mf:SetSize(FRAME_WIDTH, HEADER_HEIGHT + HEADER_GAP + 2 * (BAR_HEIGHT + BAR_GAP) + 6)
+    -- Positioned safely to the right
+    mf:SetPoint("TOPRIGHT", SettingsPanel, "TOPRIGHT", -50, -150)
+    mf:SetFrameStrata("HIGH")
+    mf:SetBackdrop({
+        edgeFile = "Interface\\BUTTONS\\WHITE8X8", edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 }
+    })
+    
+    mf.bg = mf:CreateTexture(nil, "BACKGROUND")
+    mf.bg:SetAllPoints()
+    
+    -- Clone Header
+    mf.headerFrame = CreateFrame("Frame", nil, mf)
+    mf.headerFrame:SetPoint("TOPLEFT", 0, 0)
+    mf.headerFrame:SetPoint("TOPRIGHT", 0, 0)
+    mf.headerFrame:SetHeight(HEADER_HEIGHT)
+    mf.headerBg = mf.headerFrame:CreateTexture(nil, "BACKGROUND")
+    mf.headerBg:SetAllPoints()
+    
+    local accentLine = mf.headerFrame:CreateTexture(nil, "ARTWORK")
+    accentLine:SetHeight(2)
+    accentLine:SetPoint("BOTTOMLEFT")
+    accentLine:SetPoint("BOTTOMRIGHT")
+    accentLine:SetColorTexture(0, 212/255, 1, 0.8)
+    
+    mf.titleText = mf.headerFrame:CreateFontString(nil, "OVERLAY")
+    mf.titleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    mf.titleText:SetShadowOffset(1, -1)
+    mf.titleText:SetPoint("LEFT", 10, 0)
+    mf.titleText:SetText("|cff00d4ff" .. (Interruptio.L["PANEL_HEADER"] or "INTERRUPTIO") .. "|r")
+    
+    mf.badgeFrame = CreateFrame("Frame", nil, mf.headerFrame)
+    mf.badgeFrame:SetHeight(16)
+    mf.badgeFrame:SetPoint("LEFT", mf.titleText, "RIGHT", 8, 0)
+    
+    mf.badgeBg = mf.badgeFrame:CreateTexture(nil, "BACKGROUND")
+    mf.badgeBg:SetSize(24, 16)
+    mf.badgeBg:SetPoint("CENTER", 0, 0)
+    mf.badgeBg:SetColorTexture(0, 0.83, 1, 0.12)
+    
+    mf.badgeText = mf.badgeFrame:CreateFontString(nil, "OVERLAY")
+    mf.badgeText:SetFont("Fonts\\ARIALN.TTF", 9, "")
+    mf.badgeText:SetShadowOffset(1, -1)
+    mf.badgeText:SetPoint("CENTER", 0, 0)
+    mf.badgeText:SetTextColor(0, 0.83, 1)
+    mf.badgeText:SetText("2/2")
+    
+    -- Content Frame
+    mf.cFrame = CreateFrame("Frame", nil, mf)
+    mf.cFrame:SetPoint("TOPLEFT", mf.headerFrame, "BOTTOMLEFT", 0, -HEADER_GAP)
+    mf.cFrame:SetPoint("RIGHT", mf, "RIGHT", 0, 0)
+    
+    mf.bars = {}
+    for i = 1, 2 do
+        local b = CreateFrame("Frame", nil, mf.cFrame, "BackdropTemplate")
+        b:SetHeight(BAR_HEIGHT)
+        b:SetPoint("TOPLEFT", 0, -(i-1)*(BAR_HEIGHT + BAR_GAP))
+        b:SetPoint("TOPRIGHT", 0, -(i-1)*(BAR_HEIGHT + BAR_GAP))
+        
+        b.bg = b:CreateTexture(nil, "BACKGROUND")
+        b.bg:SetAllPoints()
+        
+        b.classStripe = b:CreateTexture(nil, "ARTWORK", nil, 3)
+        b.classStripe:SetWidth(3)
+        b.classStripe:SetPoint("TOPLEFT", 0, 0)
+        b.classStripe:SetPoint("BOTTOMLEFT", 0, 0)
+        
+        b.iconBg = b:CreateTexture(nil, "ARTWORK", nil, 1)
+        b.iconBg:SetSize(ICON_SIZE + 2, ICON_SIZE + 2)
+        b.iconBg:SetPoint("LEFT", 7, 0)
+        b.iconBg:SetColorTexture(0.1, 0.1, 0.1, 0.8)
+
+        b.icon = b:CreateTexture(nil, "ARTWORK", nil, 2)
+        b.icon:SetSize(ICON_SIZE, ICON_SIZE)
+        b.icon:SetPoint("CENTER", b.iconBg, "CENTER")
+        b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+        b.marker = b:CreateTexture(nil, "ARTWORK", nil, 3)
+        b.marker:SetSize(14, 14)
+        b.marker:SetPoint("LEFT", b.icon, "RIGHT", 4, 0)
+        b.marker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+        SetRaidTargetIconTexture(b.marker, i == 1 and 8 or 7)
+        
+        b.nameText = b:CreateFontString(nil, "OVERLAY")
+        b.nameText:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        b.nameText:SetPoint("LEFT", b.marker, "RIGHT", PADDING, 0)
+        b.nameText:SetShadowOffset(1, -1)
+        
+        b.statusText = b:CreateFontString(nil, "OVERLAY")
+        b.statusText:SetFont("Fonts\\ARIALN.TTF", 10, "")
+        b.statusText:SetPoint("RIGHT", -PADDING, 0)
+        b.statusText:SetText("READY")
+        b.statusText:SetTextColor(0.1, 1, 0.1)
+        b.statusText:SetShadowOffset(1, -1)
+        
+        -- Progress strip (thin bar at bottom of row)
+        b.strip = b:CreateTexture(nil, "ARTWORK", nil, 4)
+        b.strip:SetHeight(2)
+        b.strip:SetPoint("BOTTOMLEFT", 3, 0)
+        b.strip:SetWidth(0.1) -- starts tiny
+        
+        table.insert(mf.bars, b)
+    end
+    
+    mf.bars[1].nameText:SetText("Mago")
+    mf.bars[1].icon:SetTexture(135856) -- Spell_Frost_IceShock
+    
+    mf.bars[2].nameText:SetText("Pícaro")
+    mf.bars[2].icon:SetTexture(132219) -- Ability_Kick
+    
+    if EventRegistry then
+        pcall(function()
+            EventRegistry:RegisterCallback("Settings.CategoryChanged", function(owner, category)
+                if category and category.name == Interruptio.L["CAT_PANEL"] then
+                    mf:Show()
+                    Interruptio.UI:UpdateSettingsMockup()
+                else
+                    mf:Hide()
+                end
+            end, Interruptio.UI)
+        end)
+    end
+    mf:Hide()
+end
+
+function Interruptio.UI:UpdateSettingsMockup()
+    local mf = self.MockupFrame
+    if not mf or not mf:IsShown() then return end
+    
+    local db = InterruptioDB or {}
+    local modern = (db.modernUI == nil) and true or db.modernUI
+    local isClassBars = (db.classBars == nil) and true or db.classBars
+    
+    if modern then
+        mf.bg:SetColorTexture(0, 0, 0, 0.4)
+        mf:SetBackdropBorderColor(0, 0, 0, 0.9)
+        mf.headerBg:SetColorTexture(0, 0, 0, 0.7)
+    else
+        mf.bg:SetColorTexture(0.04, 0.04, 0.04, 0.95)
+        mf:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.35)
+        mf.headerBg:SetColorTexture(0.02, 0.02, 0.02, 0.98)
+    end
+    
+    if db.hideFrame then
+        mf.bg:SetColorTexture(0, 0, 0, 0)
+        mf:SetBackdropBorderColor(0, 0, 0, 0)
+        mf.headerFrame:Hide()
+    else
+        mf.headerFrame:Show()
+    end
+    
+    for i, b in ipairs(mf.bars) do
+        local r, g, bColor = 0.5, 0.5, 0.5
+        if i == 1 then r,g,bColor = 0.25, 0.78, 0.92 end -- Mage
+        if i == 2 then r,g,bColor = 1, 0.96, 0.41 end -- Rogue
+        
+        b.bg:SetTexture(GetBarTexture())
+        
+        if modern then
+            b:SetBackdrop({ edgeFile = "Interface\\BUTTONS\\WHITE8X8", edgeSize = 1 })
+            b:SetBackdropBorderColor(0,0,0,1)
+            b.bg:SetVertexColor(0.2, 0.2, 0.2, 0.7)
+        else
+            b:SetBackdrop(nil)
+            b.bg:SetVertexColor(0.1, 0.1, 0.1, 0.9)
+        end
+        
+        if isClassBars then
+            b.bg:SetVertexColor(r, g, bColor, 0.6)
+            b.classStripe:Hide()
+            b.iconBg:Hide()
+            b.icon:ClearAllPoints()
+            b.icon:SetPoint("LEFT", 4, 0)
+        else
+            b.classStripe:SetColorTexture(r, g, bColor, 1)
+            b.classStripe:Show()
+            b.iconBg:Show()
+            b.icon:ClearAllPoints()
+            b.icon:SetPoint("CENTER", b.iconBg, "CENTER")
+        end
+    end
+end
 
 -- ============================================================
 -- Settings (unchanged)
@@ -1101,18 +1339,25 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catGen, announceCDSetting, L["OPT_ANNOUNCE_CD_DESC"])
     
     local autoFocusSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_AutoFocus", Settings.VarType.Boolean, L["OPT_AUTO_FOCUS"] or "Auto Focus", 
-        (InterruptioDB and InterruptioDB.autoFocus) or false, 
-        function() return (InterruptioDB and InterruptioDB.autoFocus) or false end,
+        catGen, "Interruptio_AutoFocus", Settings.VarType.String, L["OPT_AUTO_FOCUS"] or "Auto Focus", 
+        (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE", 
+        function() return (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE" end,
         function(val)  
             if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.autoFocus = val 
+            InterruptioDB.autoFocusMode = val 
             if Interruptio.Marks and Interruptio.Marks.UpdateSecureBtnMacro then
                 Interruptio.Marks:UpdateSecureBtnMacro()
             end
         end
     )
-    Settings.CreateCheckbox(catGen, autoFocusSetting, L["OPT_AUTO_FOCUS_DESC"] or "Changes focus automatically.")
+    local focusOptions = function()
+        local container = Settings.CreateControlTextContainer()
+        container:Add("NONE", L["VAL_NONE"] or "None (Off)")
+        container:Add("TARGET", L["VAL_TARGET"] or "Current Target")
+        container:Add("MOUSEOVER", L["VAL_MOUSEOVER"] or "Mouseover")
+        return container:GetData()
+    end
+    Settings.CreateDropdown(catGen, autoFocusSetting, focusOptions, L["OPT_AUTO_FOCUS_DESC"] or "Changes focus automatically.")
     local testSetting = Settings.RegisterProxySetting(
         catGen, "Interruptio_TestMode", Settings.VarType.Boolean, L["BTN_TEST_MODE"], 
         (InterruptioDB and InterruptioDB.testMode) or false, 
@@ -1155,6 +1400,7 @@ function Interruptio.UI:CreateSettingsMenu()
             InterruptioDB.modernUI = val
             Interruptio.UI:ApplyTheme()
             Interruptio.UI:UpdatePanel()
+            Interruptio.UI:UpdateSettingsMockup()
         end
     )
     Settings.CreateCheckbox(catPanel, modernSetting, L["OPT_MODERN_DESC"])
@@ -1167,6 +1413,7 @@ function Interruptio.UI:CreateSettingsMenu()
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.emphasizeReady = val
             Interruptio.UI:UpdatePanel()
+            Interruptio.UI:UpdateSettingsMockup()
         end
     )
     Settings.CreateCheckbox(catPanel, emphasizeSetting, L["OPT_EMPHASIZE_DESC"])
@@ -1179,6 +1426,7 @@ function Interruptio.UI:CreateSettingsMenu()
             if not InterruptioDB then InterruptioDB = {} end
             InterruptioDB.classBars = val
             Interruptio.UI:UpdatePanel()
+            Interruptio.UI:UpdateSettingsMockup()
         end
     )
     Settings.CreateCheckbox(catPanel, classBarsSetting, L["OPT_CLASS_BARS_DESC"])
@@ -1195,6 +1443,72 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     Settings.CreateCheckbox(catPanel, showSpellIconSetting, L["OPT_SPELL_ICON_DESC"])
 
+    local hidePanelSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_HidePanel", Settings.VarType.Boolean, L["OPT_HIDE_PANEL"] or "Hide Floating Panel", 
+        (InterruptioDB and InterruptioDB.hidePanel) or false, 
+        function() return (InterruptioDB and InterruptioDB.hidePanel) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.hidePanel = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, hidePanelSetting, L["OPT_HIDE_PANEL_DESC"] or "Hide the floating panel.")
+    
+    local hideFrameSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_HideFrame", Settings.VarType.Boolean, L["OPT_HIDE_FRAME"] or "Hide Frame", 
+        (InterruptioDB and InterruptioDB.hideFrame) or false, 
+        function() return (InterruptioDB and InterruptioDB.hideFrame) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.hideFrame = val
+            Interruptio.UI:ApplyTheme()
+            Interruptio.UI:UpdateSettingsMockup()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, hideFrameSetting, L["OPT_HIDE_FRAME_DESC"] or "Hide the frame background entirely.")
+
+    local onlyDungeonsSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_OnlyDungeons", Settings.VarType.Boolean, L["OPT_ONLY_DUNGEONS"] or "Only in Dungeons", 
+        (InterruptioDB and InterruptioDB.onlyDungeons) or false, 
+        function() return (InterruptioDB and InterruptioDB.onlyDungeons) or false end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.onlyDungeons = val
+            Interruptio.UI:UpdatePanel()
+        end
+    )
+    Settings.CreateCheckbox(catPanel, onlyDungeonsSetting, L["OPT_ONLY_DUNGEONS_DESC"] or "Show only when inside a dungeon/raid.")
+
+    local barTextureSetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_BarTexture", Settings.VarType.String, L["OPT_BAR_TEXTURE"] or "Bar Texture", 
+        (InterruptioDB and InterruptioDB.barTexture) or "Solid", 
+        function() return (InterruptioDB and InterruptioDB.barTexture) or "Solid" end,
+        function(val) 
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.barTexture = val
+            Interruptio.UI:UpdatePanel()
+            Interruptio.UI:UpdateSettingsMockup()
+        end
+    )
+    local textureOptions = function()
+        local container = Settings.CreateControlTextContainer()
+        container:Add("Solid", "Solid (Flat)")
+        container:Add("Blizzard", "Blizzard Classic")
+        container:Add("Smooth", "Blizzard Smooth")
+        
+        local lsm = LibStub and LibStub("LibSharedMedia-3.0", true)
+        if lsm then
+            for _, name in pairs(lsm:List("statusbar")) do
+                if name ~= "Solid" and name ~= "Default" and name ~= "Blizzard" and name ~= "Smooth" then
+                    container:Add(name, name)
+                end
+            end
+        end
+        return container:GetData()
+    end
+    Settings.CreateDropdown(catPanel, barTextureSetting, textureOptions, L["OPT_BAR_TEXTURE_DESC"])
+
     local unlockSetting = Settings.RegisterProxySetting(
         catPanel, "Interruptio_UnlockPanel", Settings.VarType.Boolean, L["BTN_UNLOCK"], 
         (InterruptioDB and InterruptioDB.unlockPanel) or false, 
@@ -1204,14 +1518,10 @@ function Interruptio.UI:CreateSettingsMenu()
             InterruptioDB.unlockPanel = val
             if val then
                 Interruptio.UI.Panel.dragOverlay:Show()
-                Interruptio.UI.Panel:Show()
-                Interruptio.UI:UpdatePanel()
             else
                 Interruptio.UI.Panel.dragOverlay:Hide()
-                if #Interruptio.Marks.Active == 0 and not InterruptioDB.testMode then
-                    Interruptio.UI.Panel:Hide()
-                end
             end
+            Interruptio.UI:UpdatePanel()
         end
     )
     Settings.CreateCheckbox(catPanel, unlockSetting, L["BTN_UNLOCK_DESC"])
@@ -1290,7 +1600,7 @@ function Interruptio.UI:CreateSettingsMenu()
             Interruptio.UI:UpdateAllNameplates()
         end
     )
-    local offsetOpts = Settings.CreateSliderOptions(-50, 50, 1)
+    local offsetOpts = Settings.CreateSliderOptions(-200, 200, 1)
     offsetOpts:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
     Settings.CreateSlider(catNP, iconOffsetSetting, offsetOpts, L["OPT_ICON_H_OFFSET_DESC"])
 
@@ -1305,11 +1615,15 @@ function Interruptio.UI:CreateSettingsMenu()
             Interruptio.UI:UpdateAllNameplates()
         end
     )
-    local offsetOptsY = Settings.CreateSliderOptions(-50, 50, 1)
+    local offsetOptsY = Settings.CreateSliderOptions(-200, 200, 1)
     offsetOptsY:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "px" end)
     Settings.CreateSlider(catNP, iconOffsetYSetting, offsetOptsY, L["OPT_ICON_V_OFFSET_DESC"])
     
     -- Eliminada la subida de los Debug Logs aquí porque se pasaron a category junto con Test Mode
+    
+    if SettingsPanel then
+        Interruptio.UI:CreateSettingsMockup(catPanel)
+    end
 end
 
 -- ============================================================

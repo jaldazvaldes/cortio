@@ -104,11 +104,28 @@ end
 function Interruptio.Marks:UpdateSecureBtnMacro()
     if InCombatLockdown() then return end
     local slot = Interruptio.Marks:GetPlayerMarkerSlotSafe()
-    local lines = {"/targetmarker " .. tostring(slot)}
-    table.insert(lines, "/stopmacro [noexists]")
+    local db = InterruptioDB or {}
     
-    if InterruptioDB and InterruptioDB.autoFocus then
-        table.insert(lines, "/focus target")
+    if db.autoFocus == true and not db.autoFocusMode then
+        db.autoFocusMode = "TARGET"
+    elseif db.autoFocus == false and not db.autoFocusMode then
+        db.autoFocusMode = "NONE"
+    end
+    db.autoFocus = nil
+    
+    local mode = db.autoFocusMode or "NONE"
+    local lines = {}
+    
+    if mode == "MOUSEOVER" then
+        table.insert(lines, "/targetmarker [@mouseover,exists] " .. tostring(slot) .. "; " .. tostring(slot))
+        table.insert(lines, "/stopmacro [@mouseover,noexists,noexists]")
+        table.insert(lines, "/focus [@mouseover,exists] mouseover; target")
+    else
+        table.insert(lines, "/targetmarker " .. tostring(slot))
+        table.insert(lines, "/stopmacro [noexists]")
+        if mode == "TARGET" then
+            table.insert(lines, "/focus target")
+        end
     end
     if not InterruptioDB or InterruptioDB.announce ~= false then
         local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
