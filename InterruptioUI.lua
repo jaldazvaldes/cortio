@@ -1388,7 +1388,7 @@ function Interruptio.UI:CreateSettingsMenu()
     
     -- Mover los debug logs a General
     local debugSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_DebugLogs", Settings.VarType.Boolean, L["OPT_DEBUG"],
+        catGen, "Interruptio_DebugLogs", Settings.VarType.Boolean, L["OPT_DEBUG"] or "Debug Logs",
         (InterruptioDB and InterruptioDB.debugLogs) or false,
         function() return (InterruptioDB and InterruptioDB.debugLogs) or false end,
         function(val)
@@ -1396,7 +1396,37 @@ function Interruptio.UI:CreateSettingsMenu()
             InterruptioDB.debugLogs = val
         end
     )
-    Settings.CreateCheckbox(catGen, debugSetting, L["OPT_DEBUG_DESC"])
+    Settings.CreateCheckbox(catGen, debugSetting, L["OPT_DEBUG_DESC"] or "Muestra logs de desarrollador en el chat.")
+
+    -- Audio Alerts
+    local audioSetting = Settings.RegisterProxySetting(
+        catGen, "Interruptio_AudioAlerts", Settings.VarType.Boolean, L["OPT_AUDIO"] or "Alertas de Audio",
+        (InterruptioDB and InterruptioDB.audioAlerts) or false,
+        function() return (InterruptioDB and InterruptioDB.audioAlerts) or false end,
+        function(val)
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.audioAlerts = val
+        end
+    )
+    Settings.CreateCheckbox(catGen, audioSetting, L["OPT_AUDIO_DESC"] or "Emite un aviso sonoro cuando tu objetivo marcado empiece a lanzar un hechizo.")
+
+    -- Audio Type (Classic or TTS)
+    local audioTypeSetting = Settings.RegisterProxySetting(
+        catGen, "Interruptio_AudioType", Settings.VarType.Number, L["OPT_AUDIO_TYPE"] or "Tipo de Alerta",
+        (InterruptioDB and InterruptioDB.audioType) or 1,
+        function() return (InterruptioDB and InterruptioDB.audioType) or 1 end,
+        function(val)
+            if not InterruptioDB then InterruptioDB = {} end
+            InterruptioDB.audioType = val
+        end
+    )
+    local audioOptions = Settings.CreateSliderOptions(1, 2, 1)
+    audioOptions:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v)
+        if v == 1 then return "Sonido (Clásico)"
+        elseif v == 2 then return "Voz (Text-To-Speech)"
+        end
+    end)
+    Settings.CreateSlider(catGen, audioTypeSetting, audioOptions, L["OPT_AUDIO_TYPE_DESC"] or "Elige el tipo de sonido para la alerta.")
 
     local disableRaidSetting = Settings.RegisterProxySetting(
         catGen, "Interruptio_DisableInRaid", Settings.VarType.Boolean, L["OPT_DISABLE_RAID"] or "Desactivar en Banda", 

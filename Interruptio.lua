@@ -649,6 +649,8 @@ function Interruptio.SetActive(active)
         _interruptFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
         _interruptFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
         _interruptFrame:RegisterEvent("UNIT_AURA")
+        _interruptFrame:RegisterEvent("UNIT_SPELLCAST_START")
+        _interruptFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     else
         _interruptFrame:UnregisterAllEvents()
         if Interruptio.UI and Interruptio.UI.Panel then Interruptio.UI.Panel:Hide() end
@@ -759,6 +761,66 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         -- Only care about nameplate units (for false-positive suppression)
         if unit and unit:find("^nameplate") then
             PushSignal("aura", unit)
+        end
+        
+    elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+        if not InterruptioDB or not InterruptioDB.audioAlerts then return end
+        if IsInRaid() then return end -- Only play audio alerts in Party/Mythic+, not in Raid
+        if not unit or not unit:find("^nameplate") then return end
+
+        local targetName = Interruptio.Taint:SafeUnitName(unit)
+        if not targetName then return end
+
+        -- Check if it's our marked target
+        local isOurTarget = false
+        for _, mark in ipairs(Interruptio.Marks.Active) do
+            if mark.playerName == Interruptio.PlayerName then
+                if mark.nameplateUnit == unit then
+                    isOurTarget = true
+                    break
+                end
+            end
+        end
+
+        if not isOurTarget then return end
+
+        -- Check if spell is interruptible safely
+        local notInterruptible = false
+        if event == "UNIT_SPELLCAST_START" then
+            local ok, _, _, _, _, _, _, _, notInt = pcall(UnitCastingInfo, unit)
+            if ok then notInterruptible = notInt end
+        else
+            local ok, _, _, _, _, _, _, notInt = pcall(UnitChannelInfo, unit)
+            if ok then notInterruptible = notInt end
+        end
+
+        if notInterruptible then return end
+
+        -- Throttling (2 seconds)
+        local now = GetTime()
+        if Interruptio._lastAudioAlert and (now - Interruptio._lastAudioAlert) < 2 then return end
+        
+        -- Check if our interrupt is on CD
+        local playerClass = select(2, UnitClass("player"))
+        local interruptSpellID = Interruptio.Data.CLASS_INTERRUPT_SPELLID[playerClass]
+        if interruptSpellID then
+            local ok, cdInfo = pcall(C_Spell.GetSpellCooldown, interruptSpellID)
+            if ok and cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
+                local cdLeft = cdInfo.startTime + cdInfo.duration - now
+                if cdLeft > 0 then return end -- Interrupt is on CD!
+            end
+        end
+
+        Interruptio._lastAudioAlert = now
+
+        -- Play Audio
+        local audioType = (InterruptioDB and InterruptioDB.audioType) or 1
+        if audioType == 1 then
+            PlaySound(8959, "Master") -- Raid Warning
+        elseif audioType == 2 then
+            if C_VoiceChat and C_VoiceChat.SpeakText then
+                C_VoiceChat.SpeakText(0, Interruptio.L["TTS_INTERRUPT"] or "Corta", 0, 100, true)
+            end
         end
     end
 end)
