@@ -355,12 +355,15 @@ function Interruptio.UI:UpdatePanel()
     for rPlayerName, data in pairs(Interruptio.RosterList) do
         local rClass = data.class
 
+        local isHiddenHealer = false
         if data.unit then
             local role = UnitGroupRolesAssigned(data.unit)
             if role == "HEALER" and rClass ~= "SHAMAN" then
-                goto continue
+                isHiddenHealer = true
             end
         end
+
+        if not isHiddenHealer then
 
         local sLeft = (data.cdEnd or 0) - now
         local isReady = sLeft <= 0
@@ -397,7 +400,7 @@ function Interruptio.UI:UpdatePanel()
             isReady = isReady,
             lastResult = data.lastResult,
         })
-        ::continue::
+        end
     end
 
     if #entries == 0 then
