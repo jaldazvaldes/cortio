@@ -354,6 +354,14 @@ function Interruptio.UI:UpdatePanel()
 
     for rPlayerName, data in pairs(Interruptio.RosterList) do
         local rClass = data.class
+
+        if data.unit then
+            local role = UnitGroupRolesAssigned(data.unit)
+            if role == "HEALER" and rClass ~= "SHAMAN" then
+                goto continue
+            end
+        end
+
         local sLeft = (data.cdEnd or 0) - now
         local isReady = sLeft <= 0
 
@@ -389,6 +397,7 @@ function Interruptio.UI:UpdatePanel()
             isReady = isReady,
             lastResult = data.lastResult,
         })
+        ::continue::
     end
 
     if #entries == 0 then
@@ -1368,7 +1377,7 @@ function Interruptio.UI:CreateSettingsMenu()
         end
     )
     Settings.CreateCheckbox(catGen, announceCDSetting, L["OPT_ANNOUNCE_CD_DESC"])
-    
+
     local autoFocusSetting = Settings.RegisterProxySetting(
         catGen, "Interruptio_AutoFocus", Settings.VarType.String, L["OPT_AUTO_FOCUS"] or "Auto Focus",
         (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE",
@@ -1835,7 +1844,8 @@ SlashCmdList["INTERRUPTIO"] = function(msg)
             local keys = {"modernUI","audioAlerts","audioType","announce","announceCD","autoFocusMode",
                           "scale","barTexture","visibilityMode","markerSlot","hidePanel","hideFrame",
                           "nameplateGlow","bringToFront","nameplateScaleBoost","iconSide","iconOffset",
-                          "iconOffsetY","classBars","showSpellIcon","emphasizeReady","debugLogs","testMode"}
+                          "iconOffsetY","classBars","showSpellIcon","emphasizeReady","debugLogs","testMode",
+                          }
             for _, k in ipairs(keys) do
                 local v = InterruptioDB[k]
                 print(string.format("  |cFFFFDD00%s|r = %s", k, tostring(v)))
