@@ -122,10 +122,19 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         C_Timer.After(3, function() Interruptio.Roster:AutoRegisterByClass(); Interruptio.Roster:RegisterPartyWatchers(); Interruptio.UI:UpdatePanel() end)
         
         Interruptio.UI:SetupKickIcon()
+        Interruptio.UI:CreateSettingsMenu()
         
         C_Timer.After(0.5, function()
             if InterruptioDB and InterruptioDB.scale then Interruptio.UI.Panel:SetScale(InterruptioDB.scale) end
-            Interruptio.UI:CreateSettingsMenu()
+            
+            -- Restaurar efectos visuales con los valores guardados.
+            -- ApplyTheme() se llama al cargar el módulo pero InterruptioDB puede no estar
+            -- disponible aún en ese momento, así que la llamamos de nuevo aquí cuando
+            -- los SavedVariables ya están garantizados.
+            Interruptio.UI:ApplyTheme()
+            if not InCombatLockdown() then
+                Interruptio.Marks:UpdateSecureBtnMacro()
+            end
         end)
         
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -144,8 +153,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, ...)
         Interruptio.UI:ReleaseNameplateFrame(arg1)
         
     elseif event == "GROUP_ROSTER_UPDATE" then
-        local disableRaid = (InterruptioDB and InterruptioDB.disableInRaid) or false
-        Interruptio.SetActive(not (IsInRaid() and disableRaid))
+        Interruptio.SetActive(true)
         if not Interruptio._active then return end
         Interruptio.Roster:Rebuild()
         Interruptio.Roster:AutoRegisterByClass()
@@ -764,62 +772,85 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         end
         
     elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
-        if not InterruptioDB or not InterruptioDB.audioAlerts then return end
-        if IsInRaid() then return end -- Only play audio alerts in Party/Mythic+, not in Raid
-        if not unit or not unit:find("^nameplate") then return end
+        local dbg = InterruptioDB and InterruptioDB.debugLogs
+        if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO?]|r event=" .. event .. " unit=" .. tostring(unit)) end
 
-        local targetName = Interruptio.Taint:SafeUnitName(unit)
-        if not targetName then return end
+        if not InterruptioDB or not InterruptioDB.audioAlerts then
+            if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r SKIP: audioAlerts desactivado") end
+            return
+        end
+        if IsInRaid() then
+            if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r SKIP: IsInRaid") end
+            return
+        end
+        if unit ~= "target" and unit ~= "focus" and not unit:match("^nameplate") then
+            if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r SKIP: unit no válido (" .. tostring(unit) .. ")") end
+            return
+        end
 
-        -- Check if it's our marked target
+        local targetName = Interruptio.Taint:SafeUnitName(unit) or tostring(unit)
+
         local isOurTarget = false
-        for _, mark in ipairs(Interruptio.Marks.Active) do
-            if mark.playerName == Interruptio.PlayerName then
-                if mark.nameplateUnit == unit then
+        local numMarks = #Interruptio.Marks.Active
+        if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r marcas=" .. numMarks .. " player=" .. tostring(Interruptio.PlayerName)) end
+
+        for i, mark in ipairs(Interruptio.Marks.Active) do
+            local isMe = (mark.playerName == Interruptio.PlayerName)
+            if dbg then
+                print(string.format("|cFF00FFFF[IT]|r  marca[%d] player=%s isMe=%s npUnit=%s token=%s slot=%s",
+                    i, tostring(mark.playerName), tostring(isMe),
+                    tostring(mark.nameplateUnit), tostring(mark.unitToken), tostring(mark.markerSlot)))
+            end
+            if isMe then
+                if mark.nameplateUnit and mark.nameplateUnit == unit then
                     isOurTarget = true
-                    break
+                elseif mark.unitToken and Interruptio.Taint:SafeIsMatch(unit, mark.unitToken) then
+                    isOurTarget = true
+                elseif mark.nameplateUnit and (unit == "target" or unit == "focus") then
+                    if Interruptio.Taint:SafeIsMatch(unit, mark.nameplateUnit) then
+                        isOurTarget = true
+                    end
+                elseif mark.markerSlot and mark.markerSlot > 0 then
+                    local okIdx, raidIdx = pcall(GetRaidTargetIndex, unit)
+                    if okIdx and raidIdx then
+                        local okCmp, isEq = pcall(function() return raidIdx == mark.markerSlot end)
+                        if okCmp and isEq then isOurTarget = true end
+                    end
                 end
+                if dbg then print("|cFF00FFFF[IT]|r  → isOurTarget=" .. tostring(isOurTarget)) end
+                if isOurTarget then break end
             end
         end
 
-        if not isOurTarget then return end
-
-        -- Check if spell is interruptible safely
-        local notInterruptible = false
-        if event == "UNIT_SPELLCAST_START" then
-            local ok, _, _, _, _, _, _, _, notInt = pcall(UnitCastingInfo, unit)
-            if ok then notInterruptible = notInt end
-        else
-            local ok, _, _, _, _, _, _, notInt = pcall(UnitChannelInfo, unit)
-            if ok then notInterruptible = notInt end
+        if not isOurTarget then
+            if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r SKIP: no es nuestro objetivo") end
+            return
         end
 
-        if notInterruptible then return end
+        -- notInterruptible from UnitCastingInfo/UnitChannelInfo is a secret boolean in WoW 12.0
+        -- Cannot be tested even inside pcall — skip this check entirely.
 
-        -- Throttling (2 seconds)
         local now = GetTime()
-        if Interruptio._lastAudioAlert and (now - Interruptio._lastAudioAlert) < 2 then return end
-        
-        -- Check if our interrupt is on CD
-        local playerClass = select(2, UnitClass("player"))
-        local interruptSpellID = Interruptio.Data.CLASS_INTERRUPT_SPELLID[playerClass]
-        if interruptSpellID then
-            local ok, cdInfo = pcall(C_Spell.GetSpellCooldown, interruptSpellID)
-            if ok and cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
-                local cdLeft = cdInfo.startTime + cdInfo.duration - now
-                if cdLeft > 0 then return end -- Interrupt is on CD!
-            end
+        if Interruptio._lastAudioAlert and (now - Interruptio._lastAudioAlert) < 2 then
+            if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO]|r SKIP: throttle 2s") end
+            return
         end
+
+        -- CD check omitted: C_Spell.GetSpellCooldown returns secret numbers in WoW 12.0
+        -- The 2-second throttle below is sufficient to prevent alert spam.
 
         Interruptio._lastAudioAlert = now
+        if dbg then print("|cFF00FFFF[IT]|r |cFFFF00FF[AUDIO]|r ¡SONIDO! unit=" .. tostring(unit) .. " name=" .. tostring(targetName)) end
 
-        -- Play Audio
         local audioType = (InterruptioDB and InterruptioDB.audioType) or 1
         if audioType == 1 then
-            PlaySound(8959, "Master") -- Raid Warning
+            PlaySound(SOUNDKIT and SOUNDKIT.RAID_WARNING or 8959, "Master")
         elseif audioType == 2 then
-            if C_VoiceChat and C_VoiceChat.SpeakText then
-                C_VoiceChat.SpeakText(0, Interruptio.L["TTS_INTERRUPT"] or "Corta", 0, 100, true)
+            if C_VoiceChat and C_VoiceChat.SpeakText and C_VoiceChat.GetTtsVoices then
+                local voiceID = 0
+                local voices = C_VoiceChat.GetTtsVoices()
+                if voices and #voices > 0 then voiceID = voices[1].voiceID end
+                C_VoiceChat.SpeakText(voiceID, Interruptio.L["TTS_INTERRUPT"] or "Corta", 0, 100, true)
             end
         end
     end

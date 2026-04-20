@@ -5,6 +5,12 @@ Interruptio = Interruptio or {}
 Interruptio.UI = {}
 
 Interruptio.UI.ActiveNameplates = {}
+Interruptio.UI.StrataCache = {}
+Interruptio.UI.ScaleCache = {}
+Interruptio.UI.ReparentedCache = {}
+Interruptio.UI.ScaleBoostedCache = {}
+Interruptio.UI.NPScaleCache = {}
+
 local nameplateFrames = {}
 local MAX_ICONS_PER_PLATE = 8
 
@@ -672,10 +678,24 @@ function Interruptio.UI:UpdatePanel()
         return
     end
 
-    if InterruptioDB and InterruptioDB.onlyDungeons then
-        local isInstance, instanceType = IsInInstance()
-        if not isInstance or (instanceType ~= "party" and instanceType ~= "raid" and instanceType ~= "scenario") then
-            if not InterruptioDB.testMode and not InterruptioDB.unlockPanel then
+    if InterruptioDB then
+        local visMode = InterruptioDB.visibilityMode or 1
+        -- 1: Always, 2: Dungeon, 3: Raid, 4: Dungeon & Raid
+        if visMode > 1 then
+            local isInstance, instanceType = IsInInstance()
+            local shouldShow = false
+            
+            if isInstance then
+                if visMode == 2 and (instanceType == "party" or instanceType == "scenario") then shouldShow = true end
+                if visMode == 3 and instanceType == "raid" then shouldShow = true end
+                if visMode == 4 and (instanceType == "party" or instanceType == "raid" or instanceType == "scenario") then shouldShow = true end
+            end
+            
+            pcall(function()
+                if InterruptioDB.testMode or InterruptioDB.unlockPanel then shouldShow = true end
+            end)
+            
+            if not shouldShow then
                 panel:Hide()
                 Interruptio.Data:SafeCall("Nameplates", function() Interruptio.UI:UpdateAllNameplates() end)
                 return
@@ -775,20 +795,20 @@ function Interruptio.UI:ReleaseNameplateFrame(unit)
         if np then
             local uFrame = np.UnitFrame or np
             -- Restore scale
-            if uFrame._interruptioScaleBoosted then
-                pcall(function() uFrame:SetScale(uFrame._interruptioOrigScale or 1) end)
-                uFrame._interruptioScaleBoosted = nil
-                uFrame._interruptioOrigScale = nil
+            if Interruptio.UI.ScaleBoostedCache[uFrame] then
+                pcall(function() uFrame:SetScale(Interruptio.UI.ScaleCache[uFrame] or 1) end)
+                Interruptio.UI.ScaleBoostedCache[uFrame] = nil
+                Interruptio.UI.ScaleCache[uFrame] = nil
             end
             -- Restore reparenting (elevation) sin ser destructivos
-            if uFrame._interruptioReparented then
+            if Interruptio.UI.ReparentedCache[uFrame] then
                 pcall(function()
-                    if uFrame._interruptioOrigStrata then uFrame:SetFrameStrata(uFrame._interruptioOrigStrata) end
-                    if uFrame._interruptioOrigLevel then uFrame:SetFrameLevel(uFrame._interruptioOrigLevel) end
+                    local cStrata = Interruptio.UI.StrataCache[uFrame]
+                    if cStrata and cStrata.strata then uFrame:SetFrameStrata(cStrata.strata) end
+                    if cStrata and cStrata.level then uFrame:SetFrameLevel(cStrata.level) end
                 end)
-                uFrame._interruptioReparented = nil
-                uFrame._interruptioOrigStrata = nil
-                uFrame._interruptioOrigLevel = nil
+                Interruptio.UI.ReparentedCache[uFrame] = nil
+                Interruptio.UI.StrataCache[uFrame] = nil
             end
         end
         f:Hide()
@@ -899,23 +919,23 @@ function Interruptio.UI:UpdateNameplate(unit)
     if np then
         -- Scale boost: solo para el mob que TÚ tienes marcado (isMyMark)
         if isMyMark and showGlow and scaleBoost ~= 1.0 then
-            if not uiFrame._interruptioOrigScale then
-                pcall(function() uiFrame._interruptioOrigScale = uiFrame:GetScale() end)
+            if not Interruptio.UI.ScaleCache[uiFrame] then
+                pcall(function() Interruptio.UI.ScaleCache[uiFrame] = uiFrame:GetScale() end)
             end
-            local desiredScale = (uiFrame._interruptioOrigScale or 1) * scaleBoost
+            local desiredScale = (Interruptio.UI.ScaleCache[uiFrame] or 1) * scaleBoost
             pcall(function()
                 local currentScale = uiFrame:GetScale()
                 if math.abs(currentScale - desiredScale) > 0.01 then
                     uiFrame:SetScale(desiredScale)
                 end
             end)
-            uiFrame._interruptioScaleBoosted = true
+            Interruptio.UI.ScaleBoostedCache[uiFrame] = true
         else
             -- Restaurar escala si ya no es tu marca o se desactiva
-            if uiFrame._interruptioScaleBoosted then
-                pcall(function() uiFrame:SetScale(uiFrame._interruptioOrigScale or 1) end)
-                uiFrame._interruptioScaleBoosted = nil
-                uiFrame._interruptioOrigScale = nil
+            if Interruptio.UI.ScaleBoostedCache[uiFrame] then
+                pcall(function() uiFrame:SetScale(Interruptio.UI.ScaleCache[uiFrame] or 1) end)
+                Interruptio.UI.ScaleBoostedCache[uiFrame] = nil
+                Interruptio.UI.ScaleCache[uiFrame] = nil
             end
         end
         
@@ -924,29 +944,31 @@ function Interruptio.UI:UpdateNameplate(unit)
         -- ============================================================
         local bringToFront = (not InterruptioDB or InterruptioDB.bringToFront == nil) and true or InterruptioDB.bringToFront
         if isMyMark and bringToFront then
-            if not uiFrame._interruptioReparented then
+            if not Interruptio.UI.ReparentedCache[uiFrame] then
                 -- Guardar strata y level originales sin arrancar la barra de su padre
                 pcall(function()
-                    uiFrame._interruptioOrigStrata = uiFrame:GetFrameStrata()
-                    uiFrame._interruptioOrigLevel = uiFrame:GetFrameLevel()
+                    Interruptio.UI.StrataCache[uiFrame] = {
+                        strata = uiFrame:GetFrameStrata(),
+                        level = uiFrame:GetFrameLevel()
+                    }
                 end)
                 -- Elevar
                 pcall(function()
                     uiFrame:SetFrameStrata("TOOLTIP")
                     uiFrame:SetFrameLevel(9000)
                 end)
-                uiFrame._interruptioReparented = true
+                Interruptio.UI.ReparentedCache[uiFrame] = true
             end
         else
             -- Restaurar strata y level originales
-            if uiFrame._interruptioReparented then
+            if Interruptio.UI.ReparentedCache[uiFrame] then
                 pcall(function()
-                    if uiFrame._interruptioOrigStrata then uiFrame:SetFrameStrata(uiFrame._interruptioOrigStrata) end
-                    if uiFrame._interruptioOrigLevel then uiFrame:SetFrameLevel(uiFrame._interruptioOrigLevel) end
+                    local cStrata = Interruptio.UI.StrataCache[uiFrame]
+                    if cStrata and cStrata.strata then uiFrame:SetFrameStrata(cStrata.strata) end
+                    if cStrata and cStrata.level then uiFrame:SetFrameLevel(cStrata.level) end
                 end)
-                uiFrame._interruptioReparented = nil
-                uiFrame._interruptioOrigStrata = nil
-                uiFrame._interruptioOrigLevel = nil
+                Interruptio.UI.ReparentedCache[uiFrame] = nil
+                Interruptio.UI.StrataCache[uiFrame] = nil
             end
         end
     end
@@ -1034,9 +1056,10 @@ function Interruptio.UI:UpdateNameplate(unit)
             if f.glowAG then f.glowAG:Stop() end
         end
         -- Restore nameplate scale
-        if np and np._interruptioScaled then
-            np:SetScale(np._interruptioOrigScale or 1)
-            np._interruptioScaled = false
+        if np and Interruptio.UI.NPScaleCache[np] then
+            np:SetScale(Interruptio.UI.ScaleCache[np] or 1)
+            Interruptio.UI.NPScaleCache[np] = nil
+            Interruptio.UI.ScaleCache[np] = nil
         end
     end
     
@@ -1218,14 +1241,14 @@ function Interruptio.UI:CreateSettingsMockup(catObj)
     
     if EventRegistry then
         pcall(function()
-            EventRegistry:RegisterCallback("Settings.CategoryChanged", function(owner, category)
+            EventRegistry:RegisterCallback("Settings.CategoryChanged", function(ownerSafeStr, category)
                 if category and category.name == Interruptio.L["CAT_PANEL"] then
                     mf:Show()
                     Interruptio.UI:UpdateSettingsMockup()
                 else
                     mf:Hide()
                 end
-            end, Interruptio.UI)
+            end, "Interruptio_SettingsMockup")
         end)
     end
     mf:Hide()
@@ -1311,8 +1334,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.RegisterAddOnCategory(catNP)
 
     local scaleSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_Scale", Settings.VarType.Number, L["OPT_SCALE"], 
-        (InterruptioDB and InterruptioDB.scale) or 1.0, 
+        catGen, "Interruptio_Scale", Settings.VarType.Number, L["OPT_SCALE"],
+        (InterruptioDB and InterruptioDB.scale) or 1.0,
         function() return (InterruptioDB and InterruptioDB.scale) or 1.0 end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1325,8 +1348,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateSlider(category, scaleSetting, scaleOpts, L["OPT_SCALE_DESC"])
     
     local announceSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_Announce", Settings.VarType.Boolean, L["OPT_ANNOUNCE"], 
-        (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce, 
+        catGen, "Interruptio_Announce", Settings.VarType.Boolean, L["OPT_ANNOUNCE"],
+        (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce,
         function() return (not InterruptioDB or InterruptioDB.announce == nil) and true or InterruptioDB.announce end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1336,8 +1359,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catGen, announceSetting, L["OPT_ANNOUNCE_DESC"])
 
     local announceCDSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_AnnounceCD", Settings.VarType.Boolean, L["OPT_ANNOUNCE_CD"], 
-        (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD, 
+        catGen, "Interruptio_AnnounceCD", Settings.VarType.Boolean, L["OPT_ANNOUNCE_CD"],
+        (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD,
         function() return (not InterruptioDB or InterruptioDB.announceCD == nil) and true or InterruptioDB.announceCD end,
         function(val)  
             if not InterruptioDB then InterruptioDB = {} end
@@ -1347,8 +1370,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catGen, announceCDSetting, L["OPT_ANNOUNCE_CD_DESC"])
     
     local autoFocusSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_AutoFocus", Settings.VarType.String, L["OPT_AUTO_FOCUS"] or "Auto Focus", 
-        (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE", 
+        catGen, "Interruptio_AutoFocus", Settings.VarType.String, L["OPT_AUTO_FOCUS"] or "Auto Focus",
+        (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE",
         function() return (InterruptioDB and InterruptioDB.autoFocusMode) or "NONE" end,
         function(val)  
             if not InterruptioDB then InterruptioDB = {} end
@@ -1367,8 +1390,8 @@ function Interruptio.UI:CreateSettingsMenu()
     end
     Settings.CreateDropdown(catGen, autoFocusSetting, focusOptions, L["OPT_AUTO_FOCUS_DESC"] or "Changes focus automatically.")
     local testSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_TestMode", Settings.VarType.Boolean, L["BTN_TEST_MODE"], 
-        (InterruptioDB and InterruptioDB.testMode) or false, 
+        catGen, "Interruptio_TestMode", Settings.VarType.Boolean, L["BTN_TEST_MODE"],
+        (InterruptioDB and InterruptioDB.testMode) or false,
         function() return (InterruptioDB and InterruptioDB.testMode) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1428,28 +1451,11 @@ function Interruptio.UI:CreateSettingsMenu()
     end)
     Settings.CreateSlider(catGen, audioTypeSetting, audioOptions, L["OPT_AUDIO_TYPE_DESC"] or "Elige el tipo de sonido para la alerta.")
 
-    local disableRaidSetting = Settings.RegisterProxySetting(
-        catGen, "Interruptio_DisableInRaid", Settings.VarType.Boolean, L["OPT_DISABLE_RAID"] or "Desactivar en Banda", 
-        (InterruptioDB and InterruptioDB.disableInRaid) or false, 
-        function() return (InterruptioDB and InterruptioDB.disableInRaid) or false end,
-        function(val) 
-            if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.disableInRaid = val 
-            if IsInRaid() then
-                Interruptio.SetActive(not val)
-                if not val then
-                    Interruptio.Roster:Rebuild()
-                    Interruptio.UI:UpdatePanel()
-                end
-            end
-        end
-    )
-    Settings.CreateCheckbox(catGen, disableRaidSetting, L["OPT_DISABLE_RAID_DESC"] or "Desactiva el addon por completo al estar en un grupo de Banda.")
 
     -- Panel Flotante Subcategory Options
     local modernSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_ModernUI", Settings.VarType.Boolean, L["OPT_MODERN"], 
-        (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI, 
+        catPanel, "Interruptio_ModernUI", Settings.VarType.Boolean, L["OPT_MODERN"],
+        (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI,
         function() return (not InterruptioDB or InterruptioDB.modernUI == nil) and true or InterruptioDB.modernUI end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1462,8 +1468,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catPanel, modernSetting, L["OPT_MODERN_DESC"])
     
     local emphasizeSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, L["OPT_EMPHASIZE"], 
-        (InterruptioDB and InterruptioDB.emphasizeReady) or false, 
+        catPanel, "Interruptio_EmphasizeReady", Settings.VarType.Boolean, L["OPT_EMPHASIZE"],
+        (InterruptioDB and InterruptioDB.emphasizeReady) or false,
         function() return (InterruptioDB and InterruptioDB.emphasizeReady) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1475,8 +1481,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catPanel, emphasizeSetting, L["OPT_EMPHASIZE_DESC"])
 
     local classBarsSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_ClassBars", Settings.VarType.Boolean, L["OPT_CLASS_BARS"], 
-        (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars, 
+        catPanel, "Interruptio_ClassBars", Settings.VarType.Boolean, L["OPT_CLASS_BARS"],
+        (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars,
         function() return (not InterruptioDB or InterruptioDB.classBars == nil) and true or InterruptioDB.classBars end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1488,8 +1494,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catPanel, classBarsSetting, L["OPT_CLASS_BARS_DESC"])
 
     local showSpellIconSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_ShowSpellIcon", Settings.VarType.Boolean, L["OPT_SPELL_ICON"], 
-        (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon, 
+        catPanel, "Interruptio_ShowSpellIcon", Settings.VarType.Boolean, L["OPT_SPELL_ICON"],
+        (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon,
         function() return (not InterruptioDB or InterruptioDB.showSpellIcon == nil) and true or InterruptioDB.showSpellIcon end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1500,8 +1506,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catPanel, showSpellIconSetting, L["OPT_SPELL_ICON_DESC"])
 
     local hidePanelSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_HidePanel", Settings.VarType.Boolean, L["OPT_HIDE_PANEL"] or "Hide Floating Panel", 
-        (InterruptioDB and InterruptioDB.hidePanel) or false, 
+        catPanel, "Interruptio_HidePanel", Settings.VarType.Boolean, L["OPT_HIDE_PANEL"] or "Hide Floating Panel",
+        (InterruptioDB and InterruptioDB.hidePanel) or false,
         function() return (InterruptioDB and InterruptioDB.hidePanel) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1512,8 +1518,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateCheckbox(catPanel, hidePanelSetting, L["OPT_HIDE_PANEL_DESC"] or "Hide the floating panel.")
     
     local hideFrameSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_HideFrame", Settings.VarType.Boolean, L["OPT_HIDE_FRAME"] or "Hide Frame", 
-        (InterruptioDB and InterruptioDB.hideFrame) or false, 
+        catPanel, "Interruptio_HideFrame", Settings.VarType.Boolean, L["OPT_HIDE_FRAME"] or "Hide Frame",
+        (InterruptioDB and InterruptioDB.hideFrame) or false,
         function() return (InterruptioDB and InterruptioDB.hideFrame) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1524,21 +1530,29 @@ function Interruptio.UI:CreateSettingsMenu()
     )
     Settings.CreateCheckbox(catPanel, hideFrameSetting, L["OPT_HIDE_FRAME_DESC"] or "Hide the frame background entirely.")
 
-    local onlyDungeonsSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_OnlyDungeons", Settings.VarType.Boolean, L["OPT_ONLY_DUNGEONS"] or "Only in Dungeons", 
-        (InterruptioDB and InterruptioDB.onlyDungeons) or false, 
-        function() return (InterruptioDB and InterruptioDB.onlyDungeons) or false end,
+    local visibilitySetting = Settings.RegisterProxySetting(
+        catPanel, "Interruptio_VisibilityMode", Settings.VarType.Number, L["OPT_VISIBILITY_MODE"] or "Visibility Mode",
+        (InterruptioDB and InterruptioDB.visibilityMode) or 1,
+        function() return (InterruptioDB and InterruptioDB.visibilityMode) or 1 end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
-            InterruptioDB.onlyDungeons = val
+            InterruptioDB.visibilityMode = val
             Interruptio.UI:UpdatePanel()
         end
     )
-    Settings.CreateCheckbox(catPanel, onlyDungeonsSetting, L["OPT_ONLY_DUNGEONS_DESC"] or "Show only when inside a dungeon/raid.")
+    local visOptions = function()
+        local container = Settings.CreateControlTextContainer()
+        container:Add(1, L["VAL_VISIBILITY_ALWAYS"] or "Always")
+        container:Add(2, L["VAL_VISIBILITY_DUNGEON"] or "Dungeon")
+        container:Add(3, L["VAL_VISIBILITY_RAID"] or "Raid")
+        container:Add(4, L["VAL_VISIBILITY_DUNGEON_RAID"] or "Dungeon & Raid")
+        return container:GetData()
+    end
+    Settings.CreateDropdown(catPanel, visibilitySetting, visOptions, L["OPT_VISIBILITY_MODE_DESC"] or "Choose when this panel is visible.")
 
     local barTextureSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_BarTexture", Settings.VarType.String, L["OPT_BAR_TEXTURE"] or "Bar Texture", 
-        (InterruptioDB and InterruptioDB.barTexture) or "Solid", 
+        catPanel, "Interruptio_BarTexture", Settings.VarType.String, L["OPT_BAR_TEXTURE"] or "Bar Texture",
+        (InterruptioDB and InterruptioDB.barTexture) or "Solid",
         function() return (InterruptioDB and InterruptioDB.barTexture) or "Solid" end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1566,8 +1580,8 @@ function Interruptio.UI:CreateSettingsMenu()
     Settings.CreateDropdown(catPanel, barTextureSetting, textureOptions, L["OPT_BAR_TEXTURE_DESC"])
 
     local unlockSetting = Settings.RegisterProxySetting(
-        catPanel, "Interruptio_UnlockPanel", Settings.VarType.Boolean, L["BTN_UNLOCK"], 
-        (InterruptioDB and InterruptioDB.unlockPanel) or false, 
+        catPanel, "Interruptio_UnlockPanel", Settings.VarType.Boolean, L["BTN_UNLOCK"],
+        (InterruptioDB and InterruptioDB.unlockPanel) or false,
         function() return (InterruptioDB and InterruptioDB.unlockPanel) or false end,
         function(val) 
             if not InterruptioDB then InterruptioDB = {} end
@@ -1813,8 +1827,29 @@ SlashCmdList["INTERRUPTIO"] = function(msg)
         else
             print("|cFF00FFFF[Interruptio]|r Developer logs: |cFFFF4444OFF|r")
         end
+    elseif cmd == "config" then
+        print("|cFF00FFFF[Interruptio]|r === Config guardada (InterruptioDB) ===")
+        if not InterruptioDB then
+            print("  |cFFFF4444InterruptioDB es NIL — SavedVariables no cargados!|r")
+        else
+            local keys = {"modernUI","audioAlerts","audioType","announce","announceCD","autoFocusMode",
+                          "scale","barTexture","visibilityMode","markerSlot","hidePanel","hideFrame",
+                          "nameplateGlow","bringToFront","nameplateScaleBoost","iconSide","iconOffset",
+                          "iconOffsetY","classBars","showSpellIcon","emphasizeReady","debugLogs","testMode"}
+            for _, k in ipairs(keys) do
+                local v = InterruptioDB[k]
+                print(string.format("  |cFFFFDD00%s|r = %s", k, tostring(v)))
+            end
+        end
+        if Interruptio.Marks and Interruptio.Marks.SABT then
+            local macro = Interruptio.Marks.SABT:GetAttribute("macrotext") or "(nil)"
+            print("|cFF00FFFF[Interruptio]|r === Macro actual ===")
+            for line in macro:gmatch("[^\n]+") do
+                print("  " .. line)
+            end
+        end
     else
-        print("|cFF00FFFF[Interruptio]|r Opciones: /it test | /it show|hide | /it debug | /it debugcl | /it logs | /it errors | /it clear")
+        print("|cFF00FFFF[Interruptio]|r Opciones: /it test | /it show|hide | /it debug | /it debugcl | /it logs | /it errors | /it clear | /it config")
         print("|cFF00FFFF[Interruptio]|r Atajos: ESC -> Opciones -> Atajos (Keybindings).")
     end
 end

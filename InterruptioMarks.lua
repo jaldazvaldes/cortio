@@ -18,8 +18,8 @@ end)
 local InterruptioMarkSABT = CreateFrame("Button", "InterruptioMarkSABT", UIParent, "SecureActionButtonTemplate")
 InterruptioMarkSABT:RegisterForClicks("AnyDown")
 InterruptioMarkSABT:SetAttribute("type", "macro")
-InterruptioMarkSABT:SetAttribute("macrotext", "/targetmarker 1")
-InterruptioMarkSABT:SetAttribute("markerSlot", 1)
+InterruptioMarkSABT:SetAttribute("macrotext", "/targetmarker 8")
+InterruptioMarkSABT:SetAttribute("markerSlot", 8)
 InterruptioMarkSABT:SetSize(1, 1)
 Interruptio.Marks.SABT = InterruptioMarkSABT
 
@@ -117,16 +117,17 @@ function Interruptio.Marks:UpdateSecureBtnMacro()
     local lines = {}
     
     if mode == "MOUSEOVER" then
-        table.insert(lines, "/targetmarker [@mouseover,exists] " .. tostring(slot) .. "; " .. tostring(slot))
-        table.insert(lines, "/stopmacro [@mouseover,noexists,noexists]")
-        table.insert(lines, "/focus [@mouseover,exists] mouseover; target")
+        table.insert(lines, "/stopmacro [@mouseover,noexists]")
+        table.insert(lines, "/targetmarker [@mouseover] " .. tostring(slot))
+        table.insert(lines, "/focus [@mouseover]")
     else
-        table.insert(lines, "/targetmarker " .. tostring(slot))
         table.insert(lines, "/stopmacro [noexists]")
+        table.insert(lines, "/targetmarker " .. tostring(slot))
         if mode == "TARGET" then
             table.insert(lines, "/focus target")
         end
     end
+    
     if not InterruptioDB or InterruptioDB.announce ~= false then
         local chatIcon = slot > 0 and ("{rt" .. slot .. "}") or ""
         local sName = Interruptio.PlayerName and Interruptio.Data:ShortName(Interruptio.PlayerName) or "?"
@@ -182,8 +183,9 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
         local msgMark = "V1|MARK|"..(Interruptio.PlayerClass or "UNKNOWN").."|"..(specIcon).."|"..(markId or "0").."|"..(slot or "0").."|"..("0")
         local msgUnmark = "V1|UNMARK"
 
-        local sourceUnit = "target"
-        
+        local isMO = (InterruptioDB and InterruptioDB.autoFocusMode == "MOUSEOVER")
+        local sourceUnit = (isMO and UnitExists("mouseover")) and "mouseover" or "target"
+
         if not UnitExists(sourceUnit) then
             Interruptio.Marks:ClearPlayerMark(Interruptio.PlayerName)
             if Interruptio.UI then Interruptio.UI:UpdatePanel() Interruptio.UI:UpdateAllNameplates() end
@@ -201,7 +203,7 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             remoteCDEnd = 0,
             remoteCDDuration = 0,
             nameplateUnit = nil,
-            unitToken = "target",
+            unitToken = isMO and nil or sourceUnit,  -- "mouseover" no es token estable
             markId = markId,
             markerSlot = slot
         })
@@ -213,11 +215,6 @@ function Interruptio.Marks:HandlePostClick(self, button, down)
             Interruptio.UI:UpdateAllNameplates()
         end
 
-        local targetName = Interruptio.Taint:SafeUnitName(sourceUnit)
-        if not targetName then return end
-        
-        local iconStr = Interruptio.Data:GetRaidIconString(slot, 14)
-        print("|cFF00FFFF[Interruptio]|r " .. string.format(Interruptio.L["MSG_ASSIGNED_PARTY"], (slot > 0 and iconStr or ""), "|cFFFFDD00" .. tostring(targetName) .. "|r"))
     end)
 end
 InterruptioMarkSABT:HookScript("PostClick", function(self, button, down) Interruptio.Marks:HandlePostClick(self, button, down) end)
