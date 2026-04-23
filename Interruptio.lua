@@ -763,6 +763,114 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         -- Only care about nameplate units (mobs being interrupted)
         if unit and unit:find("^nameplate") then
             PushSignal("interrupt", unit)
+
+            -- WoW 12.0.5 heuristic for party-kick attribution (UNIT_SPELLCAST_SUCCEEDED is stripped).
+            -- If we have a recent player cast signal, let CorrelateSignals handle it to avoid stealing credit.
+            local now = GetTime()
+            local playerKickLikely = false
+            for i = #signalTape, 1, -1 do
+                local s = signalTape[i]
+                if s and s.kind == "cast" and s.unit == "player" and (now - (s.at or 0)) < 0.3 then
+                    playerKickLikely = true
+                    break
+                end
+            end
+
+            if not playerKickLikely then
+                local mobX, mobY, _, mobMap = UnitPosition(unit)
+                local MAX_INT_RANGE = 35
+                local function computeDist(pu)
+                    if not mobX or not mobMap then return nil end
+                    local px, py, _, pmap = UnitPosition(pu)
+                    if not px or not py or pmap ~= mobMap then return nil end
+                    local dx, dy = mobX - px, mobY - py
+                    return math.sqrt(dx * dx + dy * dy)
+                end
+
+                local candidates = {}
+                for i = 1, 4 do
+                    local pu = "party" .. i
+                    if UnitExists(pu) then
+                        local memberName = UnitName(pu)
+                        if memberName then
+                            local rPlayer = FindRosterPlayerByGUIDOrName(nil, memberName)
+                            local rosterData = rPlayer and Interruptio.RosterList[rPlayer]
+                            if rosterData and rosterData.class and Interruptio.Data.CLASS_INTERRUPT_SPELLID[rosterData.class] then
+                                local isOnCD = rosterData.cdEnd and rosterData.cdEnd > now
+                                if not isOnCD then
+                                    local targetMatches = UnitIsUnit(pu .. "target", unit)
+                                    local dist = computeDist(pu)
+                                    local inRange = dist and dist <= MAX_INT_RANGE
+                                    candidates[#candidates + 1] = {
+                                        unit = pu,
+                                        name = memberName,
+                                        targetMatches = targetMatches,
+                                        dist = dist,
+                                        inRange = inRange,
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+
+                local targetingSet, inRangeSet = {}, {}
+                for _, c in ipairs(candidates) do
+                    if c.targetMatches then targetingSet[#targetingSet + 1] = c end
+                    if c.dist == nil or c.inRange then
+                        inRangeSet[#inRangeSet + 1] = c
+                    end
+                end
+
+                local function pickClosest(set)
+                    if #set == 0 then return nil end
+                    if #set == 1 then return set[1] end
+                    local bestKnown, bestKnownDist
+                    local fallback
+                    for _, c in ipairs(set) do
+                        if c.dist then
+                            if not bestKnown or c.dist < bestKnownDist then
+                                bestKnown, bestKnownDist = c, c.dist
+                            end
+                        elseif not fallback then
+                            fallback = c
+                        end
+                    end
+                    return bestKnown or fallback
+                end
+
+                local winner
+                if #targetingSet == 1 then
+                    winner = targetingSet[1]
+                elseif #targetingSet > 1 then
+                    winner = pickClosest(targetingSet)
+                elseif #inRangeSet == 1 then
+                    winner = inRangeSet[1]
+                elseif #inRangeSet > 1 then
+                    winner = pickClosest(inRangeSet)
+                elseif #candidates == 1 then
+                    winner = candidates[1]
+                end
+
+                if InterruptioDB and InterruptioDB.debugLogs then
+                    local parts = {}
+                    for _, c in ipairs(candidates) do
+                        parts[#parts + 1] = c.name .. "[tgt=" .. tostring(c.targetMatches) .. " dist=" .. tostring(c.dist and string.format("%.1f", c.dist) or "?") .. "]"
+                    end
+                    print("|cFF00FFFF[IT-KICK]|r mob=" .. tostring(unit) .. " cands=" .. #candidates .. " " .. table.concat(parts, ","))
+                end
+
+                if winner then
+                    if InterruptioDB and InterruptioDB.debugLogs then
+                        print("|cFF00FFFF[IT-KICK]|r WINNER -> " .. winner.name)
+                    end
+                    TriggerPartyCooldown(winner.unit, winner.name)
+                else
+                    if InterruptioDB and InterruptioDB.debugLogs then
+                        print("|cFF00FFFF[IT-KICK]|r NO WINNER FOUND")
+                    end
+                end
+            end
         end
 
     elseif event == "UNIT_AURA" then
@@ -772,7 +880,7 @@ _interruptFrame:SetScript("OnEvent", function(_, event, unit, ...)
         end
         
     elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
-        local dbg = InterruptioDB and InterruptioDB.debugLogs
+        local dbg = false -- Desactivado el debug de audio por defecto
         if dbg then print("|cFF00FFFF[IT]|r |cFFFF88FF[AUDIO?]|r event=" .. event .. " unit=" .. tostring(unit)) end
 
         if not InterruptioDB or not InterruptioDB.audioAlerts then
